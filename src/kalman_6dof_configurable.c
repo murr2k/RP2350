@@ -169,6 +169,9 @@ void apply_test_signal(float* gx, float* gy, float* gz, float* ax, float* ay, fl
     }
 }
 
+// Forward declarations
+void quat_integrate(Quaternion* q, float gx, float gy, float gz, float dt);
+
 // Enhanced command processing
 void process_command(char c) {
     static bool parse_mode = false;
@@ -250,13 +253,54 @@ void process_command(char c) {
                         case '0': test_mode = TEST_OFF; printf("Test mode OFF\n"); break;
                     }
                 }
+            } else if (param == 'I') {
+                // IMU data injection for regression testing
+                // Format: I<ax>,<ay>,<az>,<gx>,<gy>,<gz>
+                float ax, ay, az, gx, gy, gz;
+                if (sscanf(parse_buffer, "%f,%f,%f,%f,%f,%f", &ax, &ay, &az, &gx, &gy, &gz) == 6) {
+                    // Inject test data directly into Kalman filter
+                    // Convert gyro from deg/s to rad/s
+                    float test_gx = gx * DEG_TO_RAD;
+                    float test_gy = gy * DEG_TO_RAD;
+                    float test_gz = gz * DEG_TO_RAD;
+                    
+                    // Get time delta
+                    static uint32_t last_inject_time = 0;
+                    uint32_t current_time = time_us_32();
+                    float dt = 0.02f; // Default 50Hz
+                    if (last_inject_time != 0) {
+                        dt = (current_time - last_inject_time) / 1000000.0f;
+                    }
+                    last_inject_time = current_time;
+                    
+                    // Apply directly to Kalman filter
+                    float corrected_gx = test_gx - kalman.gx_bias;
+                    float corrected_gy = test_gy - kalman.gy_bias;
+                    float corrected_gz = test_gz - kalman.gz_bias;
+                    
+                    quat_integrate(&kalman.q, corrected_gx, corrected_gy, corrected_gz, dt);
+                    
+                    // Get Euler angles for output
+                    float pitch = atan2f(2.0f*(kalman.q.w*kalman.q.x + kalman.q.y*kalman.q.z),
+                                        1.0f - 2.0f*(kalman.q.x*kalman.q.x + kalman.q.y*kalman.q.y));
+                    float roll = asinf(2.0f*(kalman.q.w*kalman.q.y - kalman.q.z*kalman.q.x));
+                    float yaw = atan2f(2.0f*(kalman.q.w*kalman.q.z + kalman.q.x*kalman.q.y),
+                                      1.0f - 2.0f*(kalman.q.y*kalman.q.y + kalman.q.z*kalman.q.z));
+                    
+                    // Output CSV format for analysis
+                    printf("CSV,%lu,%.3f,%.3f,%.3f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f\n",
+                           current_time/1000,
+                           ax, ay, az,
+                           gx, gy, gz,
+                           pitch*RAD_TO_DEG, roll*RAD_TO_DEG, yaw*RAD_TO_DEG);
+                }
             }
             parse_mode = false;
             parse_index = 0;
         } else if (parse_index < 31) {
             parse_buffer[parse_index++] = c;
         }
-    } else if (c == 'P' || c == 'A' || c == 'T') {
+    } else if (c == 'P' || c == 'A' || c == 'T' || c == 'I') {
         parse_mode = true;
         param = c;
         parse_index = 0;
@@ -308,6 +352,9 @@ void process_command(char c) {
                 printf("  TA=1    : Test accel X\n");
                 printf("  TM=45   : Test combined motion\n");
                 printf("  T0=0    : Stop testing\n");
+                printf("\nRegression Testing:\n");
+                printf("  I<ax>,<ay>,<az>,<gx>,<gy>,<gz> : Inject IMU data\n");
+                printf("    Example: I0.0,0.0,1.0,30.0,0.0,0.0\n");
                 printf("\nOther: r=reset, d=debug, p=print config\n");
                 break;
         }

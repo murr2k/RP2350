@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2025-08-26
+
+### Added
+- **Advanced Kalman Filter Implementations:**
+  - `kalman_6dof_configurable` - Full 6-DOF quaternion-based Kalman filter with runtime axis configuration
+  - `kalman_6dof` - Optimized quaternion Kalman filter with drift-free orientation tracking
+  - `kalman_fixed` - Fixed-point optimized Kalman implementation
+  - `kalman_balance` - Specialized filter for balancing applications
+  - `quaternion_kalman` - Extended Kalman Filter (EKF) with quaternion state representation
+- **Regression Testing Framework:**
+  - IMU data injection system for closed-loop debugging
+  - 8-quadrant motion pattern testing
+  - Automated sensor fusion validation
+  - Real-time plotting and visualization tools
+  - CSV data export for analysis
+- **Serial Bridge System:**
+  - TCP-to-Serial bridge for reliable WSL communication
+  - Windows-side Python bridge with graceful Ctrl-C shutdown
+  - Comprehensive connection documentation
+  - Multiple connection methods support
+- **Enhanced Command System:**
+  - `I<ax>,<ay>,<az>,<gx>,<gy>,<gz>` - Direct IMU data injection
+  - `AMAP=x,y,z` - Runtime axis remapping
+  - `AG[0-2]=±1` - Gyro axis sign configuration
+  - `AS[0-2]=scale` - Gyro axis scaling
+  - `T[XYZ]=amplitude` - Test signal generation
+  - Extended help system with command examples
+- **Development Tools:**
+  - `flash_rp2350.sh` - Automated flashing script with picotool
+  - `check_usb.sh` - USB device status checker
+  - Multiple Python test utilities for validation
+  - Comprehensive theory of operation documentation
+
+### Fixed
+- Critical Kalman filter bugs:
+  - Bias reset issue that was zeroing calibrated values
+  - Incorrect gyro scaling (fixed to 128 LSB/dps)
+  - Missing gyro range configuration in QMI8658 initialization
+  - Axis mapping errors causing pitch/roll swap
+  - Display initialization for 3D cube rendering
+- USB passthrough issues with usbipd attachment procedures
+- Serial communication hanging in WSL
+
+### Changed
+- Improved CMake configuration for better build reliability
+- Enhanced .gitignore with Python and test file patterns
+- Refactored command processing for better extensibility
+- Optimized quaternion integration algorithms
+
+### Documentation
+- `THEORY_OF_OPERATION.md` - Complete system architecture and algorithms
+- `SERIAL_INTERFACE_DETAILED.md` - USB CDC implementation details
+- `SERIAL_BRIDGE_METHOD.md` - TCP bridge setup and usage guide
+- Comprehensive inline code documentation
+
 ## [1.0.0] - 2025-08-24
 
 ### Added
@@ -67,5 +122,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CMake 3.13+
 - Waveshare LCD libraries (included)
 
-[Unreleased]: https://github.com/murr2k/RP2350/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/murr2k/RP2350/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/murr2k/RP2350/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/murr2k/RP2350/releases/tag/v1.0.0
