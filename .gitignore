@@ -73,3 +73,41 @@ pico_sdk_import.cmake
 doxygen/
 html/
 latex/
+.claude-flow/
+.hive-mind/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+.Python
+env/
+venv/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Test outputs
+*.log
+*.csv
+test_results/
+axis_config.json
+
+# Serial bridge
+serial_bridge.pid
+*.sock
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+*.old
+temp/
+tmp/
+
+# OS generated
+Thumbs.db
+.Trashes
+.Spotlight-V100
+.TemporaryItems

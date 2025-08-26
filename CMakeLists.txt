@@ -484,6 +484,144 @@ pico_enable_stdio_usb(configurable_cube 1)
 pico_enable_stdio_uart(configurable_cube 0)
 pico_add_extra_outputs(configurable_cube)
 
+# Kalman filter balance demo
+add_executable(kalman_balance
+    src/kalman_balance.c
+    lib/LCD/LCD_1in28.c
+    lib/Config/DEV_Config.c
+)
+
+target_include_directories(kalman_balance PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/LCD
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/Config
+)
+
+target_link_libraries(kalman_balance
+    pico_stdlib
+    hardware_spi
+    hardware_i2c
+    hardware_gpio
+    hardware_pwm
+    hardware_adc
+)
+
+pico_enable_stdio_usb(kalman_balance 1)
+pico_enable_stdio_uart(kalman_balance 0)
+pico_add_extra_outputs(kalman_balance)
+
+# Kalman filter fixed version
+add_executable(kalman_fixed
+    src/kalman_fixed.c
+    lib/LCD/LCD_1in28.c
+    lib/Config/DEV_Config.c
+)
+
+target_include_directories(kalman_fixed PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/LCD
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/Config
+)
+
+target_link_libraries(kalman_fixed
+    pico_stdlib
+    hardware_spi
+    hardware_i2c
+    hardware_gpio
+    hardware_pwm
+    hardware_adc
+)
+
+pico_enable_stdio_usb(kalman_fixed 1)
+pico_enable_stdio_uart(kalman_fixed 0)
+pico_add_extra_outputs(kalman_fixed)
+
+# Quaternion-based Kalman filter
+add_executable(quaternion_kalman
+    src/quaternion_kalman.c
+    lib/LCD/LCD_1in28.c
+    lib/Config/DEV_Config.c
+)
+
+target_include_directories(quaternion_kalman PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/LCD
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/Config
+)
+
+target_link_libraries(quaternion_kalman
+    pico_stdlib
+    hardware_spi
+    hardware_i2c
+    hardware_gpio
+    hardware_pwm
+    hardware_adc
+)
+
+pico_enable_stdio_usb(quaternion_kalman 1)
+pico_enable_stdio_uart(quaternion_kalman 0)
+pico_add_extra_outputs(quaternion_kalman)
+
+# Serial communication test
+add_executable(serial_test
+    src/serial_test.c
+)
+
+target_link_libraries(serial_test
+    pico_stdlib
+)
+
+pico_enable_stdio_usb(serial_test 1)
+pico_enable_stdio_uart(serial_test 0)
+pico_add_extra_outputs(serial_test)
+
+# 6-DOF Kalman filter (stable version)
+add_executable(kalman_6dof
+    src/kalman_6dof.c
+    lib/LCD/LCD_1in28.c
+    lib/Config/DEV_Config.c
+)
+
+target_include_directories(kalman_6dof PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/LCD
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/Config
+)
+
+target_link_libraries(kalman_6dof
+    pico_stdlib
+    hardware_spi
+    hardware_i2c
+    hardware_gpio
+    hardware_pwm
+    hardware_adc
+)
+
+pico_enable_stdio_usb(kalman_6dof 1)
+pico_enable_stdio_uart(kalman_6dof 0)
+pico_add_extra_outputs(kalman_6dof)
+
+# 6-DOF Kalman filter configurable version
+add_executable(kalman_6dof_config
+    src/kalman_6dof_configurable.c
+    lib/LCD/LCD_1in28.c
+    lib/Config/DEV_Config.c
+)
+
+target_include_directories(kalman_6dof_config PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/LCD
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/Config
+)
+
+target_link_libraries(kalman_6dof_config
+    pico_stdlib
+    hardware_spi
+    hardware_i2c
+    hardware_gpio
+    hardware_pwm
+    hardware_adc
+)
+
+pico_enable_stdio_usb(kalman_6dof_config 1)
+pico_enable_stdio_uart(kalman_6dof_config 0)
+pico_add_extra_outputs(kalman_6dof_config)
+
 # Copy to Pico when built
 # add_custom_command(TARGET rp2350_lcd_demo POST_BUILD
 #     COMMAND cp ${CMAKE_CURRENT_BINARY_DIR}/rp2350_lcd_demo.uf2 /media/${USER}/RPI-RP2/
