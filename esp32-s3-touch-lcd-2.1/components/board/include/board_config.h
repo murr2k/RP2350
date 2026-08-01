@@ -85,6 +85,13 @@
 #define BOARD_EXIO_LCD_RST          1
 #define BOARD_EXIO_TOUCH_RST        2
 #define BOARD_EXIO_LCD_CS           3
+/* The buzzer is active high and sounds continuously while this pin is driven
+ * high, so it has to be parked low the moment the expander becomes an output. */
+#define BOARD_EXIO_BUZZER           8
+
+/* Output register value at startup: everything the port drives is active low
+ * and therefore idles high, except the buzzer. */
+#define BOARD_EXIO_IDLE_STATE       0x7F
 
 /* ------------------------------------------------------------------- IMU --- */
 

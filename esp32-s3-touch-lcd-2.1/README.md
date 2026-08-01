@@ -21,9 +21,10 @@ License: MIT
 - **Display**: 2.1" round IPS, 480x480, ST7701S, 16-bit parallel RGB
 - **Touch**: CST820 capacitive controller, single point plus gestures
 - **IMU**: QMI8658, 3-axis accelerometer and 3-axis gyroscope, I2C
-- **Also on board**: PCF85063 RTC, microSD slot, TCA9554 IO expander,
-  battery charger and divider
-- **Interfaces**: USB Type-C (native USB), GPIO header, JST battery connector
+- **Also on board**: PCF85063 RTC, microSD slot, TCA9554 IO expander, buzzer on
+  expander pin EXIO8, battery charger and divider
+- **Interfaces**: two USB Type-C sockets (see below), GPIO header, JST battery
+  connector
 
 ## Demos
 
@@ -84,30 +85,48 @@ or `./tools/build.sh`, which sources the toolchain for you.
 
 Output: `build/esp32s3_lcd_demo.bin`.
 
+### Which USB socket
+
+The board has two USB-C sockets and they are not interchangeable:
+
+| Socket | Goes to | Use it for |
+|--------|---------|------------|
+| **UART** | CH343 bridge to UART0 | flashing, logs, and the demo CLIs |
+| **USB** | ESP32-S3 native USB | log output only (secondary console) |
+
+**Use the UART socket.** It enumerates as a COM port no matter what firmware is
+running, which is why esptool can always reach it. The USB socket only appears
+on the host if the running firmware brings the native USB up, so a board sitting
+in an unknown state shows nothing there.
+
+A charge-only USB-C cable will power the board and light the display while
+carrying no data. If no port appears, suspect the cable first.
+
 ### Flash
 
 The ESP32-S3 has no UF2 bootloader drive. It enumerates as a serial port and
 esptool writes over it:
 
 ```bash
-idf.py -p /dev/ttyACM0 flash monitor     # Linux
-idf.py -p COM7 flash monitor             # Windows
-./tools/flash.sh /dev/ttyACM0            # same thing with the toolchain sourced
+idf.py -p COM3 flash monitor             # Windows, CH343 bridge
+idf.py -p /dev/ttyUSB0 flash monitor     # Linux
+./tools/flash.sh /dev/ttyUSB0            # same thing with the toolchain sourced
 ```
 
-If the board does not answer, hold **BOOT**, tap **RESET**, release **BOOT** to
-drop it into the ROM bootloader, then flash again.
+esptool drives the auto-reset lines, so the board does not need to be put into
+download mode by hand. If it does not answer, hold **BOOT**, tap **RESET**,
+release **BOOT**, then flash again.
 
 Leave the monitor with `Ctrl-]`.
 
 ## Serial console
 
-115200 8N1 over the USB-C connector (the rate is nominal, it is a USB CDC
-device). Any terminal works: `idf.py monitor`, minicom, screen, PuTTY.
+115200 8N1 on the **UART** socket. Any terminal works: `idf.py monitor`,
+minicom, screen, PuTTY.
 
 ```bash
-minicom -D /dev/ttyACM0 -b 115200
-screen /dev/ttyACM0 115200
+minicom -D /dev/ttyUSB0 -b 115200
+screen /dev/ttyUSB0 115200
 ```
 
 At the launcher: press a demo key, `?` to reprint the menu.
@@ -230,9 +249,14 @@ cure is a bounce buffer: see the comment in `components/display/lcd_2in1.c`.
   if the controller was reset by something else, leave the demo and come back.
 
 **Console input ignored**
-- The launcher installs the USB Serial/JTAG driver for non blocking reads. If
-  your terminal sends only on Enter, that is fine: the demos read characters as
-  they arrive.
+- Keyboard input only works on the **UART** socket. The native USB socket is
+  configured as a secondary console, which is output only.
+
+**Buzzer sounds continuously**
+- EXIO8 on the IO expander is the buzzer and it is active high, while the
+  expander's output register powers up as 0xFF. `DEV_Module_Init()` loads
+  `BOARD_EXIO_IDLE_STATE` before switching the pins to outputs for exactly this
+  reason. Anything that writes 0xFF to the expander will start the tone.
 
 **Wrong axis directions**
 - Expected on a new board. Run `rotation_test`, then `configurable_cube`, then

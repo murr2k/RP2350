@@ -190,10 +190,40 @@ Everything else is a faithful port. These are the exceptions, all of them fixes:
 * `src/ImageData.c` and the 240x240 splash bitmap: geometry specific to the
   1.28" panel.
 
+## Console wiring
+
+The board has two USB-C sockets:
+
+* **UART** goes through a CH343 bridge to UART0. It enumerates whatever the
+  firmware is doing, so this is the one esptool talks to and the one configured
+  as the primary console. One cable flashes the board, shows the log and drives
+  the demo CLIs.
+* **USB** is the ESP32-S3's native USB. It only enumerates if the running
+  firmware brings it up, which is why the factory demo shows nothing there. It
+  is wired up as the secondary console, so log output appears there too, but it
+  is output only.
+
+Swap `CONFIG_ESP_CONSOLE_UART_DEFAULT` for `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG`
+in `sdkconfig.defaults` to invert that (and delete `sdkconfig` so the defaults
+are re-read).
+
+Note that `CONFIG_ESPTOOLPY_FLASHMODE_QIO` cannot be honoured on this part:
+octal PSRAM and quad flash share data lines, so Kconfig falls back to DIO.
+
 ## Status
 
-Written against ESP-IDF v5.3. **Not compiled and not run on hardware**: no
-ESP-IDF toolchain was available in the environment where this port was written.
-Expect the usual first-build fixes. The pin map, the panel init sequence and the
-panel timings are taken from Waveshare's own sample for this board, and the
-demo logic is a direct translation of the RP2350 sources.
+Builds clean with ESP-IDF v5.3.2, no warnings from any of the sources here, and
+runs on real hardware:
+
+* ST7701S comes up at 480x480 with both PSRAM frame buffers
+* CST820 answers (chip 0xb7, project 0x98, firmware 0x03)
+* QMI8658 answers at 0x6b (revision 0x7c) and streams live data
+* the launcher, the ESC exit path and demo selection over the console all work
+
+Still to confirm on hardware: **the IMU axis mapping**. A board resting flat
+reads roughly ax -0.11, ay +0.06, az **-0.97** g, so the sensor's +Z points into
+the board while the demos were written expecting flat to read +1 g. Run
+`axis_test` and `rotation_test`, then set `BOARD_IMU_*` in `board_config.h`
+accordingly. The gyro also shows a sizeable zero-rate offset at rest (about
+-6.0, +4.0, -0.3 dps); the demos that call `qmi8658_calibrate()` remove it,
+`axis_test` deliberately does not, so you can see it.

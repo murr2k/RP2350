@@ -266,15 +266,23 @@ uint8_t DEV_Module_Init(void)
         return 1;
     }
 
-    /* All expander pins are outputs, and everything it drives is active low,
-     * so park them high before anything else touches the panel or the touch
-     * controller. */
-    err = TCA9554_Init(0x00);
+    /* All expander pins are outputs. The panel and touch resets plus the panel
+     * chip select are active low and idle high, but EXIO8 is the buzzer and
+     * sounds while it is high, so the idle pattern parks that one low.
+     *
+     * The output register powers up as 0xFF, so it has to be loaded while the
+     * pins are still inputs. Setting the direction first would sound the buzzer
+     * for as long as the next I2C transaction takes. */
+    err = TCA9554_SetAll(BOARD_EXIO_IDLE_STATE);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "IO expander not responding: %s", esp_err_to_name(err));
         return 2;
     }
-    TCA9554_SetAll(0xFF);
+    err = TCA9554_Init(0x00);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "IO expander direction setup failed: %s", esp_err_to_name(err));
+        return 2;
+    }
 
     err = backlight_init();
     if (err != ESP_OK) {

@@ -4,10 +4,7 @@
 CONFIG_IDF_TARGET="esp32s3"
 
 # --- Flash -------------------------------------------------------------------
-# 8 MB is the safe setting: boards shipping 16 MB flash still boot with it.
-# Change to CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y if your board has 16 MB and you
-# want the extra space (also grow the app partition in partitions.csv).
-CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
@@ -31,9 +28,17 @@ CONFIG_ESP32S3_DATA_CACHE_64KB=y
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 
 # --- Console -----------------------------------------------------------------
-# USB-C goes straight to the ESP32-S3 native USB, so the built-in USB Serial/JTAG
-# peripheral gives the same "plug in and get a CDC port" behaviour as the Pico.
-CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# The board has two USB-C sockets. The one marked UART goes through a bridge
+# chip to UART0, enumerates no matter what the firmware is doing, and is what
+# esptool talks to. Making it the primary console means one cable flashes the
+# board, shows the logs and drives the demo CLIs.
+#
+# The socket marked USB is the ESP32-S3's native USB. It stays wired up as the
+# secondary console, so log output appears there too, but it is output only:
+# keyboard input for the demo menus comes from the UART socket. Swap these two
+# lines for CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y to invert that.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y
 
 # --- FreeRTOS ----------------------------------------------------------------
 # 1 kHz tick so that the 5 ms / 10 ms demo loop delays keep their meaning.
