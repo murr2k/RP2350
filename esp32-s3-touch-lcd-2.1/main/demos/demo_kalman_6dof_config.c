@@ -460,7 +460,6 @@ static void run(void)
         demo_draw_exit_hint();
 
         demo_frame_end();
-        demo_delay_ms(10);
     }
     printf("\n");
 }

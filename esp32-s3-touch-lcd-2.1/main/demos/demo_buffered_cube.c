@@ -79,7 +79,7 @@ static void run(void)
             printf("\rframe %lu", (unsigned long)frame);
         }
 
-        demo_delay_ms(50);  /* same 20 fps pacing as the RP2350 version */
+        /* No delay: demo_frame_end() blocks until the panel releases a buffer. */
     }
     printf("\n");
 }

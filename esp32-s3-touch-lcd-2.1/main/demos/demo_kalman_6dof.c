@@ -427,7 +427,6 @@ static void run(void)
                    (double)s_gyro_filter_alpha);
         }
 
-        demo_delay_ms(5);
     }
 
     if (s_debug_stream) {

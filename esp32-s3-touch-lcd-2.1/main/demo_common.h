@@ -116,7 +116,8 @@ float demo_delta_seconds(uint64_t *last_us);
 /** Grab the drawable frame buffer, bind gfx to it and clear it. */
 uint16_t *demo_frame_begin(uint16_t clear_color);
 
-/** Put the bound frame on the panel. */
+/** Put the bound frame on the panel and wait for the handover to complete.
+ *  This is the render loop's pacing: demos need no delay of their own. */
 void demo_frame_end(void);
 
 /** Latest touch sample, polled by the launcher every frame. */

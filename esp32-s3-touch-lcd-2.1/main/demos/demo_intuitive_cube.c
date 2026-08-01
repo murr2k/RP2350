@@ -127,7 +127,6 @@ static void run(void)
                (double)(tilt_x * RAD_TO_DEG), (double)(tilt_y * RAD_TO_DEG),
                (double)filtered_ax, (double)filtered_ay, (double)filtered_az);
 
-        demo_delay_ms(33);
     }
     printf("\n");
 }

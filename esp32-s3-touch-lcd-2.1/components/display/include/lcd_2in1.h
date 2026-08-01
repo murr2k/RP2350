@@ -43,7 +43,11 @@ esp_err_t LCD_2IN1_Init(uint8_t Scan_dir);
 uint16_t *LCD_2IN1_GetBuffer(void);
 
 /** Show a frame. Pass the pointer from LCD_2IN1_GetBuffer() to flip buffers;
- *  any other pointer is copied into the live frame instead. */
+ *  any other pointer is copied into the live frame instead.
+ *
+ *  Blocks until the panel has finished with the outgoing buffer, which is what
+ *  makes the buffer returned by the next LCD_2IN1_GetBuffer() safe to draw
+ *  into. Callers therefore need no delay of their own: the panel paces them. */
 void LCD_2IN1_Display(uint16_t *Image);
 
 /** Fill every buffer with a colour and show it. */

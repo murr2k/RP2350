@@ -140,7 +140,6 @@ static void run(void)
     int frame = 0;
     while (!demo_exit_requested()) {
         animated_page(frame++);
-        demo_delay_ms(20);
     }
 }
 

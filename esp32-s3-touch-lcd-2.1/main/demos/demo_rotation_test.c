@@ -128,7 +128,6 @@ static void run(void)
                gyro_raw[0], gyro_raw[1], gyro_raw[2],
                (double)gyro.x, (double)gyro.y, (double)gyro.z);
 
-        demo_delay_ms(20);
     }
     printf("\n");
 }

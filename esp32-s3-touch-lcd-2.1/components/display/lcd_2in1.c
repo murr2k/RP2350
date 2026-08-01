@@ -6,9 +6,12 @@
 #include "board_config.h"
 #include "dev_config.h"
 #include "driver/spi_master.h"
+#include "esp_attr.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_rgb.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "tca9554.h"
 
 static const char *TAG = "lcd";
@@ -18,6 +21,28 @@ LCD_2IN1_ATTRIBUTES LCD_2IN1;
 static esp_lcd_panel_handle_t s_panel;
 static uint16_t *s_fb[2];
 static int s_back;              /* index of the buffer applications draw into */
+static SemaphoreHandle_t s_frame_done;
+
+/* Fires from the LCD ISR the moment the panel has finished reading a frame out
+ * of the buffer it was given and has adopted whichever buffer was handed over
+ * since. That instant is exactly when the other buffer becomes safe to draw
+ * into, so it is the event the render loop paces itself against.
+ *
+ * IRAM_ATTR because CONFIG_LCD_RGB_ISR_IRAM_SAFE is on: this has to stay
+ * callable with the flash cache disabled. Giving a semaphore is all it may do,
+ * the drawing itself happens back in the task. */
+static IRAM_ATTR bool on_frame_finish(esp_lcd_panel_handle_t panel,
+                                      const esp_lcd_rgb_panel_event_data_t *edata,
+                                      void *user_ctx)
+{
+    (void)panel;
+    (void)edata;
+    (void)user_ctx;
+
+    BaseType_t high_task_woken = pdFALSE;
+    xSemaphoreGiveFromISR(s_frame_done, &high_task_woken);
+    return high_task_woken == pdTRUE;
+}
 
 /* --- ST7701S register sequence -------------------------------------------- */
 
@@ -255,6 +280,21 @@ static esp_err_t rgb_panel_start(void)
     s_fb[0] = (uint16_t *)fb0;
     s_fb[1] = (uint16_t *)fb1;
     s_back = 1;
+
+    s_frame_done = xSemaphoreCreateBinary();
+    if (s_frame_done == NULL) {
+        ESP_LOGE(TAG, "cannot create the frame semaphore");
+        return ESP_ERR_NO_MEM;
+    }
+
+    const esp_lcd_rgb_panel_event_callbacks_t callbacks = {
+        .on_bounce_frame_finish = on_frame_finish,
+    };
+    err = esp_lcd_rgb_panel_register_event_callbacks(s_panel, &callbacks, NULL);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "cannot hook the frame event: %s", esp_err_to_name(err));
+        return err;
+    }
     return ESP_OK;
 }
 
@@ -300,15 +340,30 @@ void LCD_2IN1_Display(uint16_t *Image)
         return;
     }
 
+    const bool is_frame_buffer = (Image == s_fb[0] || Image == s_fb[1]);
+
+    /* Drop any event left over from an earlier frame, so the wait below is for
+     * the handover being requested now and not one that already happened. */
+    if (is_frame_buffer && s_frame_done != NULL) {
+        xSemaphoreTake(s_frame_done, 0);
+    }
+
     esp_lcd_panel_draw_bitmap(s_panel, 0, 0, LCD_2IN1_WIDTH, LCD_2IN1_HEIGHT, Image);
 
-    /* Handing back one of the panel's own buffers flips which one is scanned
-     * out, so the other one becomes the drawing target. Any other pointer was
-     * copied into the live buffer and nothing changes hands. */
-    if (Image == s_fb[0]) {
-        s_back = 1;
-    } else if (Image == s_fb[1]) {
-        s_back = 0;
+    /* draw_bitmap only records which buffer to use next, it does not wait: the
+     * panel keeps reading the old one until the current frame ends. Returning
+     * straight away would let the caller start clearing a buffer that is still
+     * on screen, so block until the ISR says the handover has happened. That
+     * turns the whole render loop into one paced by the panel, with no sleeps
+     * and nothing drawing into a live buffer.
+     *
+     * The timeout is a backstop: a missed event costs a frame, it does not wedge
+     * a demo. */
+    if (is_frame_buffer) {
+        if (s_frame_done != NULL) {
+            xSemaphoreTake(s_frame_done, pdMS_TO_TICKS(100));
+        }
+        s_back = (Image == s_fb[0]) ? 1 : 0;
     }
 }
 

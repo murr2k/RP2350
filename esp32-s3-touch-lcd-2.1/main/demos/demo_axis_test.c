@@ -102,7 +102,6 @@ static void run(void)
                (double)acc.x, (double)acc.y, (double)acc.z,
                (double)gyro.x, (double)gyro.y, (double)gyro.z);
 
-        demo_delay_ms(50);
     }
     printf("\n");
 }

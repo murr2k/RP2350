@@ -125,7 +125,6 @@ static void run(void)
         printf("\rAngle: %6.1f | Acc: %.2f %.2f %.2f      ",
                (double)(phi * RAD_TO_DEG), (double)ax, (double)ay, (double)az);
 
-        demo_delay_ms(50);
     }
     printf("\n");
 }

@@ -106,7 +106,6 @@ static void run(void)
                    (double)q.w, (double)q.x, (double)q.y, (double)q.z);
         }
 
-        demo_delay_ms(10);
     }
     printf("\n");
 }
