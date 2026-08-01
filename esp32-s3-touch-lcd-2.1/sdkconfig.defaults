@@ -22,6 +22,14 @@ CONFIG_SPIRAM_USE_MALLOC=y
 CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
 CONFIG_SPIRAM_RODATA=y
 
+# --- RGB panel ---------------------------------------------------------------
+# The panel runs in bounce buffer mode (see lcd_2in1.c). Keeping the LCD ISR in
+# IRAM stops a cache miss from stalling the refill, and restarting the transfer
+# on VSYNC makes any residual desync correct itself on the next frame instead of
+# leaving the picture walking sideways.
+CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
+CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
+
 # --- CPU / cache -------------------------------------------------------------
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_ESP32S3_DATA_CACHE_64KB=y

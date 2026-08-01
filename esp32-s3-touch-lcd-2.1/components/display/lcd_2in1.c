@@ -201,7 +201,7 @@ static esp_err_t rgb_panel_start(void)
         .data_width = 16,
         .bits_per_pixel = 16,
         .num_fbs = 2,               /* double buffered, both in PSRAM */
-        .bounce_buffer_size_px = 0, /* see the note below */
+        .bounce_buffer_size_px = LCD_2IN1_WIDTH * 10,
         .hsync_gpio_num = BOARD_LCD_RGB_HSYNC_GPIO,
         .vsync_gpio_num = BOARD_LCD_RGB_VSYNC_GPIO,
         .de_gpio_num = BOARD_LCD_RGB_DE_GPIO,
@@ -215,10 +215,20 @@ static esp_err_t rgb_panel_start(void)
         cfg.data_gpio_nums[i] = data_gpios[i];
     }
 
-    /* No bounce buffer: sdkconfig.defaults keeps code and constants out of
-     * flash (SPIRAM_FETCH_INSTRUCTIONS / SPIRAM_RODATA), which is the other
-     * documented cure for the panel drifting when the cache misses. If you turn
-     * those off, set bounce_buffer_size_px to LCD_2IN1_WIDTH * 10 instead. */
+    /* The bounce buffers are what stop the picture rolling sideways.
+     *
+     * Without them the LCD's DMA streams pixels straight out of PSRAM, and it
+     * has to win that bus against the CPU, which clears and redraws all 450 KB
+     * of the frame every pass. Losing the race starves the pixel FIFO, the line
+     * starts a few pixels late, and the image walks across the screen. With a
+     * bounce buffer the DMA reads from internal SRAM instead and the driver
+     * refills it from PSRAM in the background, so CPU traffic no longer shows
+     * up on the panel.
+     *
+     * Two buffers of WIDTH * 10 pixels cost about 19 KB of internal RAM. The
+     * size has to divide the frame an even number of times: 480 * 480 is 48 of
+     * these. Frame buffer switching still works, the driver picks up the new
+     * index at the start of each frame. */
 
     esp_err_t err = esp_lcd_new_rgb_panel(&cfg, &s_panel);
     if (err != ESP_OK) {
