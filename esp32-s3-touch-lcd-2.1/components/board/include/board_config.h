@@ -128,15 +128,26 @@
 
 /* Board level axis mapping and polarity for the QMI8658.
  *
- * It starts as a pass-through: the demos then apply whatever per-demo tweaks
- * they inherited from the RP2350 sources. The sensor sits differently on this
- * board, so the mapping has NOT been verified against real hardware. Run the
- * `rotation_test` and `configurable_cube` demos, then record the answer here so
- * every demo picks it up. Index i of *_MAP selects which raw sensor axis feeds
- * logical axis i; *_SIGN flips it. */
+ * Index i of *_MAP selects which raw sensor axis feeds logical axis i, and
+ * *_SIGN flips it. The demos expect the RP2350 convention: lying flat with the
+ * screen up reads +1 g on Z, tilting right is +X, tilting forward is +Y.
+ *
+ * Measured on this board, flat and screen up: (+0.05, +0.06, -0.98) g. The
+ * sensor's +Z therefore points into the back of the board, so the frame needs
+ * turning over. That is a 180 degree rotation, which flips two axes, not one:
+ * negating Z alone would leave a mirrored left-handed frame and the fusion
+ * filters would wind yaw the wrong way. The rotation below is 180 degrees about
+ * X, so Y and Z both invert.
+ *
+ * The remaining ambiguity is a 180 degree spin about Z, which decides whether
+ * tilting the board right leans the cube right or left. If it comes out
+ * mirrored, use { -1.0f, 1.0f, -1.0f } for both SIGN lines instead.
+ *
+ * The gyroscope has to get the same transformation as the accelerometer or the
+ * filters see an inconsistent frame. */
 #define BOARD_IMU_ACCEL_MAP         { 0, 1, 2 }
-#define BOARD_IMU_ACCEL_SIGN        { 1.0f, 1.0f, 1.0f }
+#define BOARD_IMU_ACCEL_SIGN        { 1.0f, -1.0f, -1.0f }
 #define BOARD_IMU_GYRO_MAP          { 0, 1, 2 }
-#define BOARD_IMU_GYRO_SIGN         { 1.0f, 1.0f, 1.0f }
+#define BOARD_IMU_GYRO_SIGN         { 1.0f, -1.0f, -1.0f }
 
 #endif /* BOARD_CONFIG_H */
