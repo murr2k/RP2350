@@ -11,6 +11,30 @@
 
 #include "demo_common.h"
 
+/* Integrated on the sensor core at 250 Hz, which is where the accuracy comes
+ * from: integrating at frame rate throws away most of the motion. */
+static float s_roll, s_pitch, s_yaw;
+
+static float wrap_pi(float a)
+{
+    while (a > PI) {
+        a -= TWO_PI;
+    }
+    while (a < -PI) {
+        a += TWO_PI;
+    }
+    return a;
+}
+
+static void filter_step(const imu_sample_t *sample)
+{
+    demo_lock();
+    s_roll = wrap_pi(s_roll + sample->gyro.x * sample->dt * DEG_TO_RAD);
+    s_pitch = wrap_pi(s_pitch + sample->gyro.y * sample->dt * DEG_TO_RAD);
+    s_yaw = wrap_pi(s_yaw + sample->gyro.z * sample->dt * DEG_TO_RAD);
+    demo_unlock();
+}
+
 static void draw_dial(int cx, int cy, float angle, uint16_t color, const char *label)
 {
     gfx_circle(cx, cy, S(30), GFX_DGREY);
@@ -52,45 +76,26 @@ static void run(void)
     qmi8658_calibrate(100);
     printf("Calibration done\n");
 
-    float roll_angle = 0.0f;
-    float pitch_angle = 0.0f;
-    float yaw_angle = 0.0f;
-    uint64_t last_us = demo_micros();
+    s_roll = 0.0f;
+    s_pitch = 0.0f;
+    s_yaw = 0.0f;
+    demo_set_filter(filter_step);
 
     while (!demo_exit_requested()) {
-        int16_t acc_raw[3];
-        int16_t gyro_raw[3];
-        vector3f_t gyro;
-
-        if (!qmi8658_read_raw(acc_raw, gyro_raw) || !demo_read_imu(NULL, &gyro)) {
+        imu_sample_t sample;
+        if (!demo_imu_latest(&sample)) {
             demo_delay_ms(10);
             continue;
         }
+        const vector3f_t gyro = sample.gyro;
+        const int16_t *gyro_raw = sample.gyro_raw;
 
-        const float dt = demo_delta_seconds(&last_us);
-
-        roll_angle += gyro.x * dt * DEG_TO_RAD;
-        pitch_angle += gyro.y * dt * DEG_TO_RAD;
-        yaw_angle += gyro.z * dt * DEG_TO_RAD;
-
-        if (roll_angle > PI) {
-            roll_angle -= TWO_PI;
-        }
-        if (roll_angle < -PI) {
-            roll_angle += TWO_PI;
-        }
-        if (pitch_angle > PI) {
-            pitch_angle -= TWO_PI;
-        }
-        if (pitch_angle < -PI) {
-            pitch_angle += TWO_PI;
-        }
-        if (yaw_angle > PI) {
-            yaw_angle -= TWO_PI;
-        }
-        if (yaw_angle < -PI) {
-            yaw_angle += TWO_PI;
-        }
+        float roll_angle, pitch_angle, yaw_angle;
+        demo_lock();
+        roll_angle = s_roll;
+        pitch_angle = s_pitch;
+        yaw_angle = s_yaw;
+        demo_unlock();
 
         demo_frame_begin(GFX_BLACK);
 
@@ -133,6 +138,7 @@ static void run(void)
                (double)gyro.x, (double)gyro.y, (double)gyro.z);
 
     }
+    demo_set_filter(NULL);
     printf("\n");
 }
 

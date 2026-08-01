@@ -186,6 +186,7 @@ static void run_demo(const demo_t *demo)
 
     demo_clear_exit();
     demo->run();
+    demo_set_filter(NULL);      /* in case the demo returned early */
     demo_clear_exit();
 
     printf("\n--- %s finished, back to the menu ---\n", demo->name);
@@ -219,6 +220,10 @@ void app_main(void)
     if (!qmi8658_init()) {
         ESP_LOGW(TAG, "IMU missing, the motion demos will show a warning");
     }
+
+    /* Sensor acquisition and the demos' filters live on the other core, so the
+     * frame budget carries only drawing. */
+    demo_sensor_start();
 
     for (;;) {
         const int index = menu_select();

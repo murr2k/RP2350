@@ -6,6 +6,8 @@
 
 #include "board_config.h"
 #include "dev_config.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "sdkconfig.h"
 
 #if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
@@ -253,33 +255,161 @@ void demo_draw_cube_mono(const vertex_t *vertices, float distance, float focal, 
 
 /* --- IMU ------------------------------------------------------------------ */
 
+/* The sensor core: reads, maps, publishes, and runs whatever filter the current
+ * demo installed. Pinned away from the core doing the drawing, so neither the
+ * I2C transaction nor the filter maths lands in the frame budget. */
+
+#define SENSOR_CORE        1
+#define SENSOR_PERIOD_MS   4        /* 250 Hz, the configured sensor ODR */
+#define SENSOR_PRIORITY    5
+
+static portMUX_TYPE s_state_lock = portMUX_INITIALIZER_UNLOCKED;
+static imu_sample_t s_sample;
+static demo_filter_fn s_filter;
+static float s_sensor_rate;
+static volatile bool s_sensor_paused;
+static volatile bool s_sensor_idle;
+
+void demo_sensor_pause(bool paused)
+{
+    s_sensor_paused = paused;
+    if (!paused) {
+        return;
+    }
+    /* Wait for the task to reach the top of its loop, so no transaction is
+     * still in flight when the caller starts probing. */
+    for (int i = 0; i < 50 && !s_sensor_idle; i++) {
+        demo_delay_ms(2);
+    }
+}
+
+void demo_lock(void)
+{
+    portENTER_CRITICAL(&s_state_lock);
+}
+
+void demo_unlock(void)
+{
+    portEXIT_CRITICAL(&s_state_lock);
+}
+
+void demo_set_filter(demo_filter_fn filter)
+{
+    demo_lock();
+    s_filter = filter;
+    demo_unlock();
+}
+
+bool demo_imu_latest(imu_sample_t *out)
+{
+    bool valid;
+    demo_lock();
+    if (out != NULL) {
+        *out = s_sample;
+    }
+    valid = s_sample.valid;
+    demo_unlock();
+    return valid;
+}
+
 bool demo_read_imu(vector3f_t *acc, vector3f_t *gyro)
+{
+    imu_sample_t sample;
+    if (!demo_imu_latest(&sample)) {
+        return false;
+    }
+    if (acc != NULL) {
+        *acc = sample.acc;
+    }
+    if (gyro != NULL) {
+        *gyro = sample.gyro;
+    }
+    return true;
+}
+
+float demo_sensor_rate(void)
+{
+    return s_sensor_rate;
+}
+
+static void sensor_task(void *arg)
 {
     static const int accel_map[3] = BOARD_IMU_ACCEL_MAP;
     static const float accel_sign[3] = BOARD_IMU_ACCEL_SIGN;
     static const int gyro_map[3] = BOARD_IMU_GYRO_MAP;
     static const float gyro_sign[3] = BOARD_IMU_GYRO_SIGN;
 
-    vector3f_t a;
-    vector3f_t g;
-    if (!qmi8658_read(&a, &g)) {
-        return false;
-    }
+    (void)arg;
 
-    const float a_raw[3] = {a.x, a.y, a.z};
-    const float g_raw[3] = {g.x, g.y, g.z};
+    TickType_t next_wake = xTaskGetTickCount();
+    uint64_t last_us = demo_micros();
+    uint64_t window_us = last_us;
+    uint32_t window_samples = 0;
+    uint32_t seq = 0;
 
-    if (acc != NULL) {
-        acc->x = a_raw[accel_map[0]] * accel_sign[0];
-        acc->y = a_raw[accel_map[1]] * accel_sign[1];
-        acc->z = a_raw[accel_map[2]] * accel_sign[2];
+    for (;;) {
+        imu_sample_t sample = {0};
+
+        s_sensor_idle = s_sensor_paused;
+
+        if (!s_sensor_paused && qmi8658_read_raw(sample.acc_raw, sample.gyro_raw)) {
+            const vector3f_t offset = qmi8658_gyro_offset();
+            const float a[3] = {
+                sample.acc_raw[0] / QMI8658_ACC_LSB_PER_G,
+                sample.acc_raw[1] / QMI8658_ACC_LSB_PER_G,
+                sample.acc_raw[2] / QMI8658_ACC_LSB_PER_G,
+            };
+            const float g[3] = {
+                sample.gyro_raw[0] / QMI8658_GYRO_LSB_PER_DPS - offset.x,
+                sample.gyro_raw[1] / QMI8658_GYRO_LSB_PER_DPS - offset.y,
+                sample.gyro_raw[2] / QMI8658_GYRO_LSB_PER_DPS - offset.z,
+            };
+
+            sample.acc.x = a[accel_map[0]] * accel_sign[0];
+            sample.acc.y = a[accel_map[1]] * accel_sign[1];
+            sample.acc.z = a[accel_map[2]] * accel_sign[2];
+            sample.gyro.x = g[gyro_map[0]] * gyro_sign[0];
+            sample.gyro.y = g[gyro_map[1]] * gyro_sign[1];
+            sample.gyro.z = g[gyro_map[2]] * gyro_sign[2];
+
+            const uint64_t now = demo_micros();
+            float dt = (float)(now - last_us) / 1000000.0f;
+            last_us = now;
+            if (dt > 0.1f) {
+                dt = (float)SENSOR_PERIOD_MS / 1000.0f;
+            }
+            sample.dt = dt;
+            sample.seq = ++seq;
+            sample.valid = true;
+
+            demo_filter_fn filter;
+            demo_lock();
+            s_sample = sample;
+            filter = s_filter;
+            demo_unlock();
+
+            /* Outside the lock: the filter takes its own where it needs it. */
+            if (filter != NULL) {
+                filter(&sample);
+            }
+
+            window_samples++;
+            if (now - window_us >= 1000000ULL) {
+                s_sensor_rate = (float)window_samples * 1000000.0f /
+                                (float)(now - window_us);
+                window_samples = 0;
+                window_us = now;
+            }
+        }
+
+        vTaskDelayUntil(&next_wake, pdMS_TO_TICKS(SENSOR_PERIOD_MS));
     }
-    if (gyro != NULL) {
-        gyro->x = g_raw[gyro_map[0]] * gyro_sign[0];
-        gyro->y = g_raw[gyro_map[1]] * gyro_sign[1];
-        gyro->z = g_raw[gyro_map[2]] * gyro_sign[2];
-    }
-    return true;
+}
+
+void demo_sensor_start(void)
+{
+    xTaskCreatePinnedToCore(sensor_task, "imu", 4096, NULL, SENSOR_PRIORITY, NULL,
+                            SENSOR_CORE);
 }
 
 /* --- launcher services ---------------------------------------------------- */

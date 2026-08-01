@@ -58,50 +58,64 @@ static void swap_axes(int map[3], int a, int b)
     map[b] = tmp;
 }
 
-static void read_configured_imu(float *ax, float *ay, float *az,
-                                float *gx, float *gy, float *gz)
+/* Runs on the sensor core at 250 Hz. The configuration it reads is written by
+ * the CLI on the render core, so it is copied under the lock rather than used
+ * field by field, which would let a half applied change through. */
+static void filter_step(const imu_sample_t *sample)
 {
-    vector3f_t acc;
-    vector3f_t gyro;
-    if (!demo_read_imu(&acc, &gyro)) {
+    config_t cfg;
+    quaternion_t q;
+
+    demo_lock();
+    cfg = s_config;
+    q = s_q;
+    demo_unlock();
+
+    if (cfg.paused) {
         return;
     }
 
-    float a[3] = {acc.x, acc.y, acc.z};
-    float g[3] = {gyro.x * DEG_TO_RAD, gyro.y * DEG_TO_RAD, gyro.z * DEG_TO_RAD};
+    float a[3] = {sample->acc.x, sample->acc.y, sample->acc.z};
+    float g[3] = {sample->gyro.x * DEG_TO_RAD, sample->gyro.y * DEG_TO_RAD,
+                  sample->gyro.z * DEG_TO_RAD};
 
-    if (s_config.invert_ax) {
+    if (cfg.invert_ax) {
         a[0] = -a[0];
     }
-    if (s_config.invert_ay) {
+    if (cfg.invert_ay) {
         a[1] = -a[1];
     }
-    if (s_config.invert_az) {
+    if (cfg.invert_az) {
         a[2] = -a[2];
     }
-    if (s_config.invert_gx) {
+    if (cfg.invert_gx) {
         g[0] = -g[0];
     }
-    if (s_config.invert_gy) {
+    if (cfg.invert_gy) {
         g[1] = -g[1];
     }
-    if (s_config.invert_gz) {
+    if (cfg.invert_gz) {
         g[2] = -g[2];
     }
 
-    *ax = a[s_config.accel_map[0]];
-    *ay = a[s_config.accel_map[1]];
-    *az = a[s_config.accel_map[2]];
-    *gx = g[s_config.gyro_map[0]];
-    *gy = g[s_config.gyro_map[1]];
-    *gz = g[s_config.gyro_map[2]];
+    const float ax = a[cfg.accel_map[0]];
+    const float ay = a[cfg.accel_map[1]];
+    const float az = a[cfg.accel_map[2]];
+    const float gx = g[cfg.gyro_map[0]];
+    const float gy = g[cfg.gyro_map[1]];
+    const float gz = g[cfg.gyro_map[2]];
 
-    s_last_acc[0] = *ax;
-    s_last_acc[1] = *ay;
-    s_last_acc[2] = *az;
-    s_last_gyro[0] = *gx;
-    s_last_gyro[1] = *gy;
-    s_last_gyro[2] = *gz;
+    madgwick_update(&q, cfg.beta, gx, gy, gz, ax, ay, az, sample->dt);
+
+    demo_lock();
+    s_q = q;
+    s_last_acc[0] = ax;
+    s_last_acc[1] = ay;
+    s_last_acc[2] = az;
+    s_last_gyro[0] = gx;
+    s_last_gyro[1] = gy;
+    s_last_gyro[2] = gz;
+    demo_unlock();
 }
 
 static void print_menu(void)
@@ -184,7 +198,12 @@ static void process_command(char cmd)
         }
         printf("Beta: %.3f\n", (double)s_config.beta); break;
 
-    case 'r': quat_identity(&s_q); printf("Orientation reset\n"); break;
+    case 'r':
+        demo_lock();
+        quat_identity(&s_q);
+        demo_unlock();
+        printf("Orientation reset\n");
+        break;
     case 'b': calibrate_gyro(); break;
 
     case 'v':
@@ -268,8 +287,7 @@ static void run(void)
 
     calibrate_gyro();
     print_menu();
-
-    uint64_t last_us = demo_micros();
+    demo_set_filter(filter_step);
 
     while (!demo_exit_requested()) {
         int c;
@@ -282,11 +300,10 @@ static void run(void)
             continue;
         }
 
-        float ax = 0, ay = 0, az = 0, gx = 0, gy = 0, gz = 0;
-        read_configured_imu(&ax, &ay, &az, &gx, &gy, &gz);
-
-        const float dt = demo_delta_seconds(&last_us);
-        madgwick_update(&s_q, s_config.beta, gx, gy, gz, ax, ay, az, dt);
+        quaternion_t q;
+        demo_lock();
+        q = s_q;
+        demo_unlock();
 
         demo_frame_begin(GFX_BLACK);
 
@@ -294,12 +311,12 @@ static void run(void)
             vertex_t rotated[8];
             for (int i = 0; i < 8; i++) {
                 rotated[i] = demo_cube_vertices[i];
-                quat_rotate_vertex(&rotated[i], &s_q);
+                quat_rotate_vertex(&rotated[i], &q);
             }
             demo_draw_cube(rotated, CUBE_DIST, CUBE_FOCAL);
         }
         if (s_config.show_axes) {
-            draw_axes(&s_q);
+            draw_axes(&q);
         }
         if (s_config.show_data) {
             draw_sensor_data();
@@ -316,6 +333,7 @@ static void run(void)
 
         demo_frame_end();
     }
+    demo_set_filter(NULL);
     printf("\n");
 }
 

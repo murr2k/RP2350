@@ -56,6 +56,10 @@ static void draw_report(void)
     demo_frame_end();
 }
 
+/* Scanning uses i2c_master_probe(), which stashes a pointer to its own stack
+ * frame in the shared bus handle, so the sensor task has to be off the bus for
+ * the whole scan. Leaving it running corrupts the next transaction and panics
+ * with StoreProhibited. */
 static void scan_i2c(void)
 {
     char found[48] = {0};
@@ -152,6 +156,7 @@ static void run(void)
            (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
            (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 
+    demo_sensor_pause(true);
     scan_i2c();
 
     report("expander 0x%02x %s", BOARD_TCA9554_ADDR,
@@ -163,6 +168,8 @@ static void run(void)
            cst820_present() ? "ok" : "MISSING");
     report("rtc 0x%02x %s", BOARD_RTC_ADDR,
            DEV_I2C_Probe(BOARD_RTC_ADDR) ? "ok" : "MISSING");
+    demo_sensor_pause(false);
+
     report("lcd %dx%d, %d MHz pclk", DISP_W, DISP_H, BOARD_LCD_PCLK_HZ / 1000000);
     report("battery %.2f V", (double)DEV_Battery_Volts());
     if (qmi8658_present()) {

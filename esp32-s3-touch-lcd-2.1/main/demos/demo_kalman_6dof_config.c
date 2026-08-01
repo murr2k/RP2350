@@ -123,6 +123,58 @@ static void apply_test_signal(float *gx, float *gy, float *gz,
     }
 }
 
+/* Sensor core: axis mapping, test injection, low pass, integration. The render
+ * core only reads the snapshot. */
+static float s_filtered_g[3];
+static float s_snap_acc[3];
+static float s_snap_roll, s_snap_pitch, s_snap_yaw;
+static int16_t s_snap_gyro_raw[3];
+
+static void filter_step(const imu_sample_t *sample)
+{
+    axis_config_t axis;
+    demo_lock();
+    axis = s_axis;
+    demo_unlock();
+
+    const float raw_gyro[3] = {sample->gyro.x * DEG_TO_RAD, sample->gyro.y * DEG_TO_RAD,
+                               sample->gyro.z * DEG_TO_RAD};
+    const float raw_accel[3] = {sample->acc.x, sample->acc.y, sample->acc.z};
+
+    float configured_gyro[3];
+    float configured_accel[3];
+    apply_axis_config(raw_gyro, configured_gyro, axis.gyro_map, axis.gyro_sign,
+                      axis.gyro_scale);
+    apply_axis_config(raw_accel, configured_accel, axis.accel_map, axis.accel_sign,
+                      axis.accel_scale);
+
+    float gx = configured_gyro[0];
+    float gy = configured_gyro[1];
+    float gz = configured_gyro[2];
+    float ax = configured_accel[0];
+    float ay = configured_accel[1];
+    float az = configured_accel[2];
+
+    apply_test_signal(&gx, &gy, &gz, &ax, &ay, &az);
+
+    const float alpha = s_gyro_filter_alpha;
+    s_filtered_g[0] = alpha * s_filtered_g[0] + (1.0f - alpha) * gx;
+    s_filtered_g[1] = alpha * s_filtered_g[1] + (1.0f - alpha) * gy;
+    s_filtered_g[2] = alpha * s_filtered_g[2] + (1.0f - alpha) * gz;
+
+    demo_lock();
+    quat_integrate(&s_q, s_filtered_g[0] - s_gx_bias, s_filtered_g[1] - s_gy_bias,
+                   s_filtered_g[2] - s_gz_bias, sample->dt);
+    quat_to_euler(&s_q, &s_snap_roll, &s_snap_pitch, &s_snap_yaw);
+    s_snap_acc[0] = ax;
+    s_snap_acc[1] = ay;
+    s_snap_acc[2] = az;
+    s_snap_gyro_raw[0] = sample->gyro_raw[0];
+    s_snap_gyro_raw[1] = sample->gyro_raw[1];
+    s_snap_gyro_raw[2] = sample->gyro_raw[2];
+    demo_unlock();
+}
+
 static void print_help(void)
 {
     printf("\n=== AXIS CONFIGURATION HELP ===\n");
@@ -188,10 +240,11 @@ static void handle_injection(const char *body)
     const float test_gy = gy * DEG_TO_RAD - s_gy_bias;
     const float test_gz = gz * DEG_TO_RAD - s_gz_bias;
 
-    quat_integrate(&s_q, test_gx, test_gy, test_gz, dt);
-
     float roll, pitch, yaw;
+    demo_lock();
+    quat_integrate(&s_q, test_gx, test_gy, test_gz, dt);
     quat_to_euler(&s_q, &roll, &pitch, &yaw);
+    demo_unlock();
 
     /* Field order is the RP2350 wire format, which labelled the atan2 angle
      * "pitch" and the asin angle "roll" (the opposite way round from
@@ -338,7 +391,9 @@ static void process_command(char c)
 
     switch (c) {
     case 'r':
+        demo_lock();
         quat_identity(&s_q);
+        demo_unlock();
         printf("Reset orientation\n");
         break;
     case 'd':
@@ -373,8 +428,10 @@ static void run(void)
         printf("No IMU detected: injection and test signals still work.\n");
     }
 
-    uint64_t last_us = demo_micros();
-    float filtered_gx = 0.0f, filtered_gy = 0.0f, filtered_gz = 0.0f;
+    s_filtered_g[0] = s_filtered_g[1] = s_filtered_g[2] = 0.0f;
+    if (have_imu) {
+        demo_set_filter(filter_step);
+    }
 
     while (!demo_exit_requested()) {
         int c;
@@ -382,47 +439,23 @@ static void run(void)
             process_command((char)c);
         }
 
-        vector3f_t acc = {0.0f, 0.0f, 1.0f};
-        vector3f_t gyro = {0.0f, 0.0f, 0.0f};
-        int16_t acc_raw[3] = {0, 0, 0};
-        int16_t gyro_raw[3] = {0, 0, 0};
-
-        if (have_imu) {
-            qmi8658_read_raw(acc_raw, gyro_raw);
-            demo_read_imu(&acc, &gyro);
-        }
-
-        const float raw_gyro[3] = {gyro.x * DEG_TO_RAD, gyro.y * DEG_TO_RAD,
-                                   gyro.z * DEG_TO_RAD};
-        const float raw_accel[3] = {acc.x, acc.y, acc.z};
-
-        float configured_gyro[3];
-        float configured_accel[3];
-        apply_axis_config(raw_gyro, configured_gyro, s_axis.gyro_map, s_axis.gyro_sign,
-                          s_axis.gyro_scale);
-        apply_axis_config(raw_accel, configured_accel, s_axis.accel_map, s_axis.accel_sign,
-                          s_axis.accel_scale);
-
-        float gx = configured_gyro[0];
-        float gy = configured_gyro[1];
-        float gz = configured_gyro[2];
-        float ax = configured_accel[0];
-        float ay = configured_accel[1];
-        float az = configured_accel[2];
-
-        apply_test_signal(&gx, &gy, &gz, &ax, &ay, &az);
-
-        filtered_gx = s_gyro_filter_alpha * filtered_gx + (1.0f - s_gyro_filter_alpha) * gx;
-        filtered_gy = s_gyro_filter_alpha * filtered_gy + (1.0f - s_gyro_filter_alpha) * gy;
-        filtered_gz = s_gyro_filter_alpha * filtered_gz + (1.0f - s_gyro_filter_alpha) * gz;
-
-        const float dt = demo_delta_seconds(&last_us);
-
-        quat_integrate(&s_q, filtered_gx - s_gx_bias, filtered_gy - s_gy_bias,
-                       filtered_gz - s_gz_bias, dt);
-
         float roll, pitch, yaw;
-        quat_to_euler(&s_q, &roll, &pitch, &yaw);
+        float ax, ay, az;
+        int16_t gyro_raw[3];
+        quaternion_t q;
+
+        demo_lock();
+        q = s_q;
+        roll = s_snap_roll;
+        pitch = s_snap_pitch;
+        yaw = s_snap_yaw;
+        ax = s_snap_acc[0];
+        ay = s_snap_acc[1];
+        az = s_snap_acc[2];
+        gyro_raw[0] = s_snap_gyro_raw[0];
+        gyro_raw[1] = s_snap_gyro_raw[1];
+        gyro_raw[2] = s_snap_gyro_raw[2];
+        demo_unlock();
 
         if (s_debug_stream) {
             /* Same field order as the injection echo above. */
@@ -439,7 +472,7 @@ static void run(void)
         vertex_t cube[8];
         for (int i = 0; i < 8; i++) {
             cube[i] = s_unit_cube[i];
-            quat_rotate_vertex(&cube[i], &s_q);
+            quat_rotate_vertex(&cube[i], &q);
         }
         demo_draw_cube_mono(cube, CUBE_DIST, CUBE_FOCAL, GFX_GREEN);
 
@@ -468,6 +501,7 @@ static void run(void)
 
         demo_frame_end();
     }
+    demo_set_filter(NULL);
     printf("\n");
 }
 

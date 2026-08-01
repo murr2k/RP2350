@@ -190,6 +190,47 @@ Everything else is a faithful port. These are the exceptions, all of them fixes:
 * `src/ImageData.c` and the 240x240 splash bitmap: geometry specific to the
   1.28" panel.
 
+## Threading
+
+The RP2350 ran everything in one loop. Here the work is split across the two
+cores:
+
+* **Core 0** draws. The main task renders and calls `LCD_2IN1_Display()`, which
+  blocks until the panel has released the outgoing buffer. The LCD ISR also
+  lands here, and it is not cheap: bounce mode copies the whole 450 KB frame
+  from PSRAM every refresh, about 26 MB/s of memcpy in interrupt context.
+* **Core 1** reads the IMU at its 250 Hz output rate, applies the board axis
+  map, publishes the sample, and runs whichever filter the current demo
+  installed with `demo_set_filter()`.
+
+So filters integrate at 250 Hz while the display runs at 58.5 Hz, instead of
+both being pinned to the frame rate. State shared between the two is guarded by
+`demo_lock()` / `demo_unlock()`, a spinlock, held only long enough to copy a
+struct.
+
+Two filters had a fixed blend coefficient tuned for the old loop rate, which
+would have become four to eight times twitchier at 250 Hz. `intuitive_cube` and
+`gravity_locked_cube` now derive their coefficient from dt against a fixed time
+constant, so they feel the way the originals did.
+
+### i2c_master_probe is not safe alongside other bus traffic
+
+Worth knowing if you add anything that scans the bus. `i2c_master_probe()`
+builds its operation list on the stack and publishes a pointer to it in the
+shared bus handle, and it reprograms the bus timing:
+
+```c
+i2c_operation_t i2c_ops[] = { ... };        /* stack */
+bus_handle->i2c_trans = (i2c_transaction_t) { .ops = i2c_ops, ... };
+```
+
+Once it returns and drops the bus mutex that pointer dangles. With a single
+user of the bus nothing notices. With the sensor task reading at 250 Hz on the
+other core, the next transaction picks up the stale pointer and the firmware
+panics with StoreProhibited on a recycled stack address. The `diagnostic` demo
+therefore calls `demo_sensor_pause(true)` around its scan. Ordinary device
+transactions are properly serialised and need no such care.
+
 ## Console wiring
 
 The board has two USB-C sockets:

@@ -14,7 +14,26 @@
 #define CUBE_HALF   50.0f
 #define CUBE_DIST   200.0f
 #define CUBE_FOCAL  120.0f
-#define FILTER_ALPHA 0.1f
+
+/* The original used a fixed alpha of 0.1 at roughly 30 Hz, which is a time
+ * constant of about 0.3 s. Now that the filter runs at the sensor's 250 Hz, a
+ * fixed alpha would make it eight times twitchier, so derive alpha from dt and
+ * keep the feel the original had. */
+#define FILTER_TAU  0.3f
+
+/* Written on the sensor core, read on the render core. */
+static float s_fax, s_fay, s_faz;
+
+static void filter_step(const imu_sample_t *sample)
+{
+    const float alpha = sample->dt / (FILTER_TAU + sample->dt);
+
+    demo_lock();
+    s_fax += alpha * (sample->acc.x - s_fax);
+    s_fay += alpha * (sample->acc.y - s_fay);
+    s_faz += alpha * (sample->acc.z - s_faz);
+    demo_unlock();
+}
 
 static void draw_horizon(float tilt_x, float tilt_y)
 {
@@ -54,20 +73,18 @@ static void run(void)
         return;
     }
 
-    float filtered_ax = 0.0f;
-    float filtered_ay = 0.0f;
-    float filtered_az = 0.0f;
+    s_fax = 0.0f;
+    s_fay = 0.0f;
+    s_faz = 0.0f;
+    demo_set_filter(filter_step);
 
     while (!demo_exit_requested()) {
-        vector3f_t acc;
-        if (!demo_read_imu(&acc, NULL)) {
-            demo_delay_ms(10);
-            continue;
-        }
-
-        filtered_ax = FILTER_ALPHA * acc.x + (1.0f - FILTER_ALPHA) * filtered_ax;
-        filtered_ay = FILTER_ALPHA * acc.y + (1.0f - FILTER_ALPHA) * filtered_ay;
-        filtered_az = FILTER_ALPHA * acc.z + (1.0f - FILTER_ALPHA) * filtered_az;
+        float filtered_ax, filtered_ay, filtered_az;
+        demo_lock();
+        filtered_ax = s_fax;
+        filtered_ay = s_fay;
+        filtered_az = s_faz;
+        demo_unlock();
 
         /* asinf() is only defined on [-1,1] and a shake can push past 1 g. */
         float clamped_x = filtered_ax;
@@ -130,6 +147,7 @@ static void run(void)
                (double)filtered_ax, (double)filtered_ay, (double)filtered_az);
 
     }
+    demo_set_filter(NULL);
     printf("\n");
 }
 

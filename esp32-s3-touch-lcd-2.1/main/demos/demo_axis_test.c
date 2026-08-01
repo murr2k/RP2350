@@ -50,15 +50,15 @@ static void run(void)
     }
 
     while (!demo_exit_requested()) {
-        int16_t acc_raw[3];
-        int16_t gyro_raw[3];
-        vector3f_t acc;
-        vector3f_t gyro;
-
-        if (!qmi8658_read_raw(acc_raw, gyro_raw) || !demo_read_imu(&acc, &gyro)) {
+        imu_sample_t sample;
+        if (!demo_imu_latest(&sample)) {
             demo_delay_ms(20);
             continue;
         }
+        const vector3f_t acc = sample.acc;
+        const vector3f_t gyro = sample.gyro;
+        const int16_t *acc_raw = sample.acc_raw;
+        const int16_t *gyro_raw = sample.gyro_raw;
 
         demo_frame_begin(GFX_BLACK);
         draw_reference();

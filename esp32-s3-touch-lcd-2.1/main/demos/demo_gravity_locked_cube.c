@@ -15,7 +15,61 @@
 #define CUBE_HALF   40.0f
 #define CUBE_DIST   150.0f
 #define CUBE_FOCAL  100.0f
-#define ALPHA       0.98f       /* 0.98 trusts the gyro, as in the original */
+/* The original blended with a fixed 0.98 at about 20 Hz, which is a 2.45 s time
+ * constant. Derive the blend from dt now that the filter runs at 250 Hz, so the
+ * balance between gyro and accelerometer stays where it was. */
+#define FILTER_TAU  2.45f
+
+/* Written on the sensor core, read on the render core. */
+static float s_phi;
+static float s_phi_cal;
+static vector3f_t s_gravity;
+
+static void filter_step(const imu_sample_t *sample)
+{
+    float ax = sample->acc.x;
+    float ay = sample->acc.y;
+    float az = sample->acc.z;
+
+    const float mag = sqrtf(ax * ax + ay * ay + az * az);
+    if (mag > 0.0f) {
+        ax /= mag;
+        ay /= mag;
+        az /= mag;
+    }
+
+    /* Component of the rotation rate along gravity. */
+    const float w_par = ax * sample->gyro.x * DEG_TO_RAD +
+                        ay * sample->gyro.y * DEG_TO_RAD +
+                        az * sample->gyro.z * DEG_TO_RAD;
+
+    float phi;
+    float phi_cal;
+    demo_lock();
+    phi = s_phi;
+    phi_cal = s_phi_cal;
+    demo_unlock();
+
+    const float phi_gyro = phi + w_par * sample->dt;
+
+    float phi_accel = atan2f(ax, ay) - phi_cal;
+    while (phi_accel > PI) {
+        phi_accel -= TWO_PI;
+    }
+    while (phi_accel < -PI) {
+        phi_accel += TWO_PI;
+    }
+
+    const float alpha = FILTER_TAU / (FILTER_TAU + sample->dt);
+    phi = alpha * phi_gyro + (1.0f - alpha) * phi_accel;
+
+    demo_lock();
+    s_phi = phi;
+    s_gravity.x = ax;
+    s_gravity.y = ay;
+    s_gravity.z = az;
+    demo_unlock();
+}
 
 static float calibrate(void)
 {
@@ -51,48 +105,19 @@ static void run(void)
         return;
     }
 
-    const float phi_cal = calibrate();
-    float phi = 0.0f;
-    uint64_t last_us = demo_micros();
+    s_phi = 0.0f;
+    s_phi_cal = calibrate();
+    demo_set_filter(filter_step);
 
     while (!demo_exit_requested()) {
-        vector3f_t acc;
-        vector3f_t gyro;
-        if (!demo_read_imu(&acc, &gyro)) {
-            demo_delay_ms(10);
-            continue;
-        }
-
-        const float dt = demo_delta_seconds(&last_us);
-
-        /* Gyro in rad/s, as the original converted it. */
-        const float gx = gyro.x * DEG_TO_RAD;
-        const float gy = gyro.y * DEG_TO_RAD;
-        const float gz = gyro.z * DEG_TO_RAD;
-
-        float ax = acc.x;
-        float ay = acc.y;
-        float az = acc.z;
-        const float mag = sqrtf(ax * ax + ay * ay + az * az);
-        if (mag > 0.0f) {
-            ax /= mag;
-            ay /= mag;
-            az /= mag;
-        }
-
-        /* Component of the rotation rate along gravity. */
-        const float w_par = ax * gx + ay * gy + az * gz;
-        const float phi_gyro = phi + w_par * dt;
-
-        float phi_accel = atan2f(ax, ay) - phi_cal;
-        while (phi_accel > PI) {
-            phi_accel -= TWO_PI;
-        }
-        while (phi_accel < -PI) {
-            phi_accel += TWO_PI;
-        }
-
-        phi = ALPHA * phi_gyro + (1.0f - ALPHA) * phi_accel;
+        float phi;
+        float ax, ay, az;
+        demo_lock();
+        phi = s_phi;
+        ax = s_gravity.x;
+        ay = s_gravity.y;
+        az = s_gravity.z;
+        demo_unlock();
 
         demo_frame_begin(GFX_BLACK);
 
@@ -129,6 +154,7 @@ static void run(void)
                (double)(phi * RAD_TO_DEG), (double)ax, (double)ay, (double)az);
 
     }
+    demo_set_filter(NULL);
     printf("\n");
 }
 

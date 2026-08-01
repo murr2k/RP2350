@@ -97,9 +97,56 @@ void demo_draw_cube_mono(const vertex_t *vertices, float distance, float focal, 
 
 /* --- IMU ------------------------------------------------------------------ */
 
-/** Read the sensor with the board level axis map from board_config.h applied.
- *  Acceleration comes back in g, angular rate in degrees per second.
- *  Returns false if the IMU is missing or the bus errored. */
+/* The IMU is owned by a task pinned to the core that is not doing the drawing.
+ * It reads the sensor at its 250 Hz output rate, applies the board axis map,
+ * and publishes the result. Rendering never touches the I2C bus, and filters
+ * registered with demo_set_filter() run at the sensor's rate rather than the
+ * display's, so integration accuracy stops depending on the frame rate. */
+
+typedef struct {
+    vector3f_t acc;         /**< g, board frame */
+    vector3f_t gyro;        /**< degrees per second, board frame */
+    int16_t acc_raw[3];     /**< raw counts, sensor frame */
+    int16_t gyro_raw[3];
+    float dt;               /**< seconds since the previous sample */
+    uint32_t seq;           /**< increments once per sample */
+    bool valid;
+} imu_sample_t;
+
+/** Called on the sensor core once per sample. Keep it short: it runs at 250 Hz
+ *  and holds up the next read. Guard any state the render loop also touches
+ *  with demo_lock() / demo_unlock(). */
+typedef void (*demo_filter_fn)(const imu_sample_t *sample);
+
+/** Start the sensor task. Called once at boot. */
+void demo_sensor_start(void);
+
+/** Install the filter that runs on the sensor core, or NULL to remove it.
+ *  A demo installs its own once its state is initialised, and removes it
+ *  before returning. */
+void demo_set_filter(demo_filter_fn filter);
+
+/** Most recent sample. Consistent: never a mix of two reads. */
+bool demo_imu_latest(imu_sample_t *out);
+
+/** Samples per second the sensor task is actually achieving. */
+float demo_sensor_rate(void);
+
+/** Stop or restart the sensor task's I2C traffic.
+ *
+ *  Needed around i2c_master_probe(): that call publishes a pointer to its own
+ *  stack frame into the shared bus handle and reprograms the bus timing, so it
+ *  is only safe when nothing else is using the bus. Anything that scans the bus
+ *  has to quiesce this task first. Returns once any transaction already in
+ *  flight has finished. */
+void demo_sensor_pause(bool paused);
+
+/** Short critical section for state shared between the two cores. */
+void demo_lock(void);
+void demo_unlock(void);
+
+/** Latest acceleration in g and angular rate in degrees per second, taken from
+ *  the published sample. Does no I2C, so it is cheap to call while drawing. */
 bool demo_read_imu(vector3f_t *acc, vector3f_t *gyro);
 
 /* --- launcher services ---------------------------------------------------- */

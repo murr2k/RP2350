@@ -122,6 +122,89 @@ static void kalman_update_accel(kalman_state_t *k, float ax, float ay, float az,
     quat_normalize(&k->q);
 }
 
+/* Everything the render core needs, filled by the sensor core under the lock so
+ * a frame never shows a half updated filter. */
+typedef struct {
+    quaternion_t q;
+    float pitch, roll, yaw;
+    float comp_pitch, comp_roll, comp_yaw;
+    float raw_g[3];         /* degrees per second, after the axis swap */
+    float acc[3];
+    float filt_g[3];        /* degrees per second */
+    float bias[3];
+} kalman_snapshot_t;
+
+static kalman_snapshot_t s_snap;
+static float s_filtered_g[3];
+
+static void filter_step(const imu_sample_t *sample)
+{
+    const float ax = sample->acc.x;
+    const float ay = sample->acc.y;
+    const float az = sample->acc.z;
+
+    /* Axis swap inherited from the RP2350 build. */
+    const float gx = sample->gyro.y * DEG_TO_RAD;
+    const float gy = -sample->gyro.x * DEG_TO_RAD;
+    const float gz = -sample->gyro.z * DEG_TO_RAD;
+    const float dt = sample->dt;
+    const float alpha_f = s_gyro_filter_alpha;
+    const float alpha_c = 0.98f;
+
+    s_filtered_g[0] = alpha_f * s_filtered_g[0] + (1.0f - alpha_f) * gx;
+    s_filtered_g[1] = alpha_f * s_filtered_g[1] + (1.0f - alpha_f) * gy;
+    s_filtered_g[2] = alpha_f * s_filtered_g[2] + (1.0f - alpha_f) * gz;
+
+    const float accel_pitch = atan2f(ax, sqrtf(ay * ay + az * az));
+    const float accel_roll = atan2f(ay, sqrtf(ax * ax + az * az));
+
+    demo_lock();
+
+    const float corrected_gx = s_filtered_g[0] - s_kalman.gx_bias;
+    const float corrected_gy = s_filtered_g[1] - s_kalman.gy_bias;
+    const float corrected_gz = s_filtered_g[2] - s_kalman.gz_bias;
+
+    quat_integrate(&s_kalman.q, corrected_gx, corrected_gy, corrected_gz, dt);
+    kalman_update_accel(&s_kalman, ax, ay, az, dt);
+
+    float roll, pitch, yaw;
+    quat_to_euler(&s_kalman.q, &roll, &pitch, &yaw);
+
+    s_comp_pitch = alpha_c * (s_comp_pitch + corrected_gx * dt) +
+                   (1.0f - alpha_c) * accel_pitch;
+    s_comp_roll = alpha_c * (s_comp_roll + corrected_gy * dt) +
+                  (1.0f - alpha_c) * accel_roll;
+    s_comp_yaw += corrected_gz * dt;
+    if (s_comp_yaw > PI) {
+        s_comp_yaw -= TWO_PI;
+    }
+    if (s_comp_yaw < -PI) {
+        s_comp_yaw += TWO_PI;
+    }
+
+    s_snap.q = s_kalman.q;
+    s_snap.pitch = pitch;
+    s_snap.roll = roll;
+    s_snap.yaw = yaw;
+    s_snap.comp_pitch = s_comp_pitch;
+    s_snap.comp_roll = s_comp_roll;
+    s_snap.comp_yaw = s_comp_yaw;
+    s_snap.raw_g[0] = gx * RAD_TO_DEG;
+    s_snap.raw_g[1] = gy * RAD_TO_DEG;
+    s_snap.raw_g[2] = gz * RAD_TO_DEG;
+    s_snap.acc[0] = ax;
+    s_snap.acc[1] = ay;
+    s_snap.acc[2] = az;
+    s_snap.filt_g[0] = s_filtered_g[0] * RAD_TO_DEG;
+    s_snap.filt_g[1] = s_filtered_g[1] * RAD_TO_DEG;
+    s_snap.filt_g[2] = s_filtered_g[2] * RAD_TO_DEG;
+    s_snap.bias[0] = s_kalman.gx_bias;
+    s_snap.bias[1] = s_kalman.gy_bias;
+    s_snap.bias[2] = s_kalman.gz_bias;
+
+    demo_unlock();
+}
+
 static void draw_angle_bar(int x, int y, float angle, uint16_t color)
 {
     const int width = S(80);
@@ -186,9 +269,11 @@ static void process_command(char c)
                 case 'B': {
                     float bx, by, bz;
                     if (sscanf(parse_buffer, "B=%f,%f,%f", &bx, &by, &bz) == 3) {
+                        demo_lock();
                         s_kalman.gx_bias = bx;
                         s_kalman.gy_bias = by;
                         s_kalman.gz_bias = bz;
+                        demo_unlock();
                         printf("Set bias=[%.4f,%.4f,%.4f]\n",
                                (double)bx, (double)by, (double)bz);
                     }
@@ -207,6 +292,7 @@ static void process_command(char c)
 
     switch (c) {
     case 'r': {
+        demo_lock();
         const float bx = s_kalman.gx_bias;
         const float by = s_kalman.gy_bias;
         const float bz = s_kalman.gz_bias;
@@ -218,6 +304,7 @@ static void process_command(char c)
         s_comp_pitch = 0.0f;
         s_comp_roll = 0.0f;
         s_comp_yaw = 0.0f;
+        demo_unlock();
 
         printf("Reset orientation (bias preserved: %.4f,%.4f,%.4f)\n",
                (double)bx, (double)by, (double)bz);
@@ -298,9 +385,8 @@ static void run(void)
     printf("Note: starting with zero bias. Use PB=x,y,z to apply a calibration.\n");
     printf("Press 'h' for help\n");
 
-    uint64_t last_us = demo_micros();
-    const float alpha = 0.98f;
-    float filtered_gx = 0.0f, filtered_gy = 0.0f, filtered_gz = 0.0f;
+    s_filtered_g[0] = s_filtered_g[1] = s_filtered_g[2] = 0.0f;
+    demo_set_filter(filter_step);
 
     while (!demo_exit_requested()) {
         int c;
@@ -308,50 +394,14 @@ static void run(void)
             process_command((char)c);
         }
 
-        vector3f_t acc;
-        vector3f_t gyro;
-        if (!demo_read_imu(&acc, &gyro)) {
-            demo_delay_ms(5);
-            continue;
-        }
+        kalman_snapshot_t snap;
+        demo_lock();
+        snap = s_snap;
+        demo_unlock();
 
-        const float ax = acc.x;
-        const float ay = acc.y;
-        const float az = acc.z;
-
-        /* Axis swap inherited from the RP2350 build. */
-        const float gx = gyro.y * DEG_TO_RAD;
-        const float gy = -gyro.x * DEG_TO_RAD;
-        const float gz = -gyro.z * DEG_TO_RAD;
-
-        const float dt = demo_delta_seconds(&last_us);
-
-        filtered_gx = s_gyro_filter_alpha * filtered_gx + (1.0f - s_gyro_filter_alpha) * gx;
-        filtered_gy = s_gyro_filter_alpha * filtered_gy + (1.0f - s_gyro_filter_alpha) * gy;
-        filtered_gz = s_gyro_filter_alpha * filtered_gz + (1.0f - s_gyro_filter_alpha) * gz;
-
-        const float corrected_gx = filtered_gx - s_kalman.gx_bias;
-        const float corrected_gy = filtered_gy - s_kalman.gy_bias;
-        const float corrected_gz = filtered_gz - s_kalman.gz_bias;
-
-        quat_integrate(&s_kalman.q, corrected_gx, corrected_gy, corrected_gz, dt);
-        kalman_update_accel(&s_kalman, ax, ay, az, dt);
-
-        float kalman_roll, kalman_pitch, kalman_yaw;
-        quat_to_euler(&s_kalman.q, &kalman_roll, &kalman_pitch, &kalman_yaw);
-
-        const float accel_pitch = atan2f(ax, sqrtf(ay * ay + az * az));
-        const float accel_roll = atan2f(ay, sqrtf(ax * ax + az * az));
-
-        s_comp_pitch = alpha * (s_comp_pitch + corrected_gx * dt) + (1.0f - alpha) * accel_pitch;
-        s_comp_roll = alpha * (s_comp_roll + corrected_gy * dt) + (1.0f - alpha) * accel_roll;
-        s_comp_yaw += corrected_gz * dt;
-        if (s_comp_yaw > PI) {
-            s_comp_yaw -= TWO_PI;
-        }
-        if (s_comp_yaw < -PI) {
-            s_comp_yaw += TWO_PI;
-        }
+        const float kalman_pitch = snap.pitch;
+        const float kalman_roll = snap.roll;
+        const float kalman_yaw = snap.yaw;
 
         demo_frame_begin(GFX_BLACK);
 
@@ -359,7 +409,7 @@ static void run(void)
             vertex_t cube[8];
             for (int i = 0; i < 8; i++) {
                 cube[i] = s_unit_cube[i];
-                quat_rotate_vertex(&cube[i], &s_kalman.q);
+                quat_rotate_vertex(&cube[i], &snap.q);
             }
             demo_draw_cube_mono(cube, CUBE_DIST, CUBE_FOCAL, GFX_GREEN);
             draw_angle_bar(DISP_CX, 340, kalman_pitch, GFX_GREEN);
@@ -380,20 +430,20 @@ static void run(void)
                 const float cy = cube[i].y;
                 const float cz = cube[i].z;
 
-                const float y1 = cy * cosf(s_comp_pitch) - cz * sinf(s_comp_pitch);
-                const float z1 = cy * sinf(s_comp_pitch) + cz * cosf(s_comp_pitch);
-                const float x2 = cx * cosf(s_comp_roll) + z1 * sinf(s_comp_roll);
-                const float z2 = -cx * sinf(s_comp_roll) + z1 * cosf(s_comp_roll);
+                const float y1 = cy * cosf(snap.comp_pitch) - cz * sinf(snap.comp_pitch);
+                const float z1 = cy * sinf(snap.comp_pitch) + cz * cosf(snap.comp_pitch);
+                const float x2 = cx * cosf(snap.comp_roll) + z1 * sinf(snap.comp_roll);
+                const float z2 = -cx * sinf(snap.comp_roll) + z1 * cosf(snap.comp_roll);
 
-                cube[i].x = x2 * cosf(s_comp_yaw) - y1 * sinf(s_comp_yaw);
-                cube[i].y = x2 * sinf(s_comp_yaw) + y1 * cosf(s_comp_yaw);
+                cube[i].x = x2 * cosf(snap.comp_yaw) - y1 * sinf(snap.comp_yaw);
+                cube[i].y = x2 * sinf(snap.comp_yaw) + y1 * cosf(snap.comp_yaw);
                 cube[i].z = z2;
             }
             demo_draw_cube_mono(cube, CUBE_DIST, CUBE_FOCAL, GFX_RED);
 
             if (s_display_mode == 1) {
-                draw_angle_bar(DISP_CX, 340, s_comp_pitch, GFX_RED);
-                draw_angle_bar(DISP_CX, 360, s_comp_roll, GFX_RED);
+                draw_angle_bar(DISP_CX, 340, snap.comp_pitch, GFX_RED);
+                draw_angle_bar(DISP_CX, 360, snap.comp_roll, GFX_RED);
             }
         }
 
@@ -417,15 +467,16 @@ static void run(void)
         if (s_debug_stream && ++s_debug_counter >= 5) {
             s_debug_counter = 0;
             printf("%lu,", (unsigned long)demo_millis());
-            printf("%.3f,%.3f,%.3f,", (double)(gx * RAD_TO_DEG), (double)(gy * RAD_TO_DEG),
-                   (double)(gz * RAD_TO_DEG));
-            printf("%.3f,%.3f,%.3f,", (double)ax, (double)ay, (double)az);
-            printf("%.3f,%.3f,%.3f,", (double)(filtered_gx * RAD_TO_DEG),
-                   (double)(filtered_gy * RAD_TO_DEG), (double)(filtered_gz * RAD_TO_DEG));
-            printf("%.4f,%.4f,%.4f,", (double)s_kalman.gx_bias, (double)s_kalman.gy_bias,
-                   (double)s_kalman.gz_bias);
-            printf("%.4f,%.4f,%.4f,%.4f,", (double)s_kalman.q.w, (double)s_kalman.q.x,
-                   (double)s_kalman.q.y, (double)s_kalman.q.z);
+            printf("%.3f,%.3f,%.3f,", (double)snap.raw_g[0], (double)snap.raw_g[1],
+                   (double)snap.raw_g[2]);
+            printf("%.3f,%.3f,%.3f,", (double)snap.acc[0], (double)snap.acc[1],
+                   (double)snap.acc[2]);
+            printf("%.3f,%.3f,%.3f,", (double)snap.filt_g[0], (double)snap.filt_g[1],
+                   (double)snap.filt_g[2]);
+            printf("%.4f,%.4f,%.4f,", (double)snap.bias[0], (double)snap.bias[1],
+                   (double)snap.bias[2]);
+            printf("%.4f,%.4f,%.4f,%.4f,", (double)snap.q.w, (double)snap.q.x,
+                   (double)snap.q.y, (double)snap.q.z);
             printf("%.2f,%.2f,%.2f,", (double)(kalman_pitch * RAD_TO_DEG),
                    (double)(kalman_roll * RAD_TO_DEG), (double)(kalman_yaw * RAD_TO_DEG));
             printf("%.3f,%.5f,%.3f\n", (double)s_kp_gain, (double)s_ki_gain,
@@ -433,6 +484,8 @@ static void run(void)
         }
 
     }
+
+    demo_set_filter(NULL);
 
     if (s_debug_stream) {
         printf("DEBUG_STOP\n");

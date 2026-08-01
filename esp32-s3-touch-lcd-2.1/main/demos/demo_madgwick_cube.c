@@ -16,6 +16,29 @@
 #define BETA       0.1f
 #define CAL_SAMPLES 200
 
+/* Written on the sensor core at 250 Hz, read on the render core once a frame. */
+static quaternion_t s_q;
+
+static void filter_step(const imu_sample_t *sample)
+{
+    /* The original inverted the Y rate after its own axis testing. */
+    const float gx = sample->gyro.x * DEG_TO_RAD;
+    const float gy = -sample->gyro.y * DEG_TO_RAD;
+    const float gz = sample->gyro.z * DEG_TO_RAD;
+
+    quaternion_t q;
+    demo_lock();
+    q = s_q;
+    demo_unlock();
+
+    madgwick_update(&q, BETA, gx, gy, gz, sample->acc.x, sample->acc.y, sample->acc.z,
+                    sample->dt);
+
+    demo_lock();
+    s_q = q;
+    demo_unlock();
+}
+
 static void draw_axes(const quaternion_t *q)
 {
     vertex_t axes[3] = {{40, 0, 0}, {0, 40, 0}, {0, 0, 40}};
@@ -54,26 +77,15 @@ static void run(void)
     printf("Calibration complete: %.3f %.3f %.3f dps\n",
            (double)offset.x, (double)offset.y, (double)offset.z);
 
-    quaternion_t q;
-    quat_identity(&q);
-    uint64_t last_us = demo_micros();
+    quat_identity(&s_q);
+    demo_set_filter(filter_step);
     uint32_t frames = 0;
 
     while (!demo_exit_requested()) {
-        vector3f_t acc;
-        vector3f_t gyro;
-        if (!demo_read_imu(&acc, &gyro)) {
-            demo_delay_ms(10);
-            continue;
-        }
-
-        /* The original inverted the Y rate after its own axis testing. */
-        const float gx = gyro.x * DEG_TO_RAD;
-        const float gy = -gyro.y * DEG_TO_RAD;
-        const float gz = gyro.z * DEG_TO_RAD;
-
-        const float dt = demo_delta_seconds(&last_us);
-        madgwick_update(&q, BETA, gx, gy, gz, acc.x, acc.y, acc.z, dt);
+        quaternion_t q;
+        demo_lock();
+        q = s_q;
+        demo_unlock();
 
         float roll, pitch, yaw;
         quat_to_euler(&q, &roll, &pitch, &yaw);
@@ -107,13 +119,15 @@ static void run(void)
         demo_frame_end();
 
         if ((++frames % 10) == 0) {
-            printf("\rR:%6.1f P:%6.1f Y:%6.1f | Q: %.2f %.2f %.2f %.2f   ",
+            printf("\rR:%6.1f P:%6.1f Y:%6.1f | Q: %.2f %.2f %.2f %.2f | imu %.0f Hz  ",
                    (double)(roll * RAD_TO_DEG), (double)(pitch * RAD_TO_DEG),
                    (double)(yaw * RAD_TO_DEG),
-                   (double)q.w, (double)q.x, (double)q.y, (double)q.z);
+                   (double)q.w, (double)q.x, (double)q.y, (double)q.z,
+                   (double)demo_sensor_rate());
         }
 
     }
+    demo_set_filter(NULL);
     printf("\n");
 }
 
