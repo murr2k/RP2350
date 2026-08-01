@@ -443,19 +443,26 @@ static void run(void)
         }
         demo_draw_cube_mono(cube, CUBE_DIST, CUBE_FOCAL, GFX_GREEN);
 
-        gfx_printf(S(10), S(10), GFX_WHITE, 2, "P %+6.1f R %+6.1f Y %+6.1f",
-                   (double)(pitch * RAD_TO_DEG), (double)(roll * RAD_TO_DEG),
-                   (double)(yaw * RAD_TO_DEG));
-        gfx_printf(S(10), S(22), GFX_GREY, 2, "gmap %d%d%d sign %+.0f%+.0f%+.0f",
-                   s_axis.gyro_map[0], s_axis.gyro_map[1], s_axis.gyro_map[2],
-                   (double)s_axis.gyro_sign[0], (double)s_axis.gyro_sign[1],
-                   (double)s_axis.gyro_sign[2]);
+        char line[48];
+        snprintf(line, sizeof(line), "P %+6.1f R %+6.1f Y %+6.1f",
+                 (double)(pitch * RAD_TO_DEG), (double)(roll * RAD_TO_DEG),
+                 (double)(yaw * RAD_TO_DEG));
+        gfx_text_centered(DISP_CX, DEMO_ROW_TOP(0), line, GFX_WHITE, 2);
+
+        snprintf(line, sizeof(line), "gmap %d%d%d sign %+.0f%+.0f%+.0f",
+                 s_axis.gyro_map[0], s_axis.gyro_map[1], s_axis.gyro_map[2],
+                 (double)s_axis.gyro_sign[0], (double)s_axis.gyro_sign[1],
+                 (double)s_axis.gyro_sign[2]);
+        gfx_text_centered(DISP_CX, DEMO_ROW_TOP(1), line, GFX_GREY, 2);
+
         if (s_test_mode != TEST_OFF) {
-            gfx_printf(S(10), S(34), GFX_YELLOW, 2, "test mode %d amp %.1f",
-                       (int)s_test_mode, (double)(s_test_amplitude * RAD_TO_DEG));
+            snprintf(line, sizeof(line), "test mode %d amp %.1f",
+                     (int)s_test_mode, (double)(s_test_amplitude * RAD_TO_DEG));
+            gfx_text_centered(DISP_CX, DEMO_ROW_TOP(2), line, GFX_YELLOW, 2);
         }
         if (!have_imu) {
-            gfx_text(S(10), S(46), "no IMU: injection only", GFX_RED, 2);
+            gfx_text_centered(DISP_CX, DEMO_ROW_BOTTOM(0), "no IMU: injection only",
+                              GFX_RED, 2);
         }
         demo_draw_exit_hint();
 

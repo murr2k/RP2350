@@ -43,6 +43,10 @@
 void gfx_bind(uint16_t *fb);
 uint16_t *gfx_buffer(void);
 
+/** Half width of the visible circle on row y. The panel is round, so anything
+ *  drawn further than this from the centre column is invisible. */
+int gfx_visible_half_width(int y);
+
 void gfx_clear(uint16_t color);
 void gfx_pixel(int x, int y, uint16_t color);
 void gfx_hline(int x, int y, int w, uint16_t color);

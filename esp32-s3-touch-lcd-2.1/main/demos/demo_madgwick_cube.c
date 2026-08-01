@@ -89,12 +89,19 @@ static void run(void)
         draw_axes(&q);
         demo_draw_cube(rotated, CUBE_DIST, CUBE_FOCAL);
 
-        gfx_printf(S(10), S(10), GFX_WHITE, 2, "R %+6.1f" GFX_DEG, (double)(roll * RAD_TO_DEG));
-        gfx_printf(S(10), S(22), GFX_WHITE, 2, "P %+6.1f" GFX_DEG, (double)(pitch * RAD_TO_DEG));
-        gfx_printf(S(10), S(34), GFX_WHITE, 2, "Y %+6.1f" GFX_DEG, (double)(yaw * RAD_TO_DEG));
-        gfx_printf(S(10), S(200), GFX_GREY, 2, "q %.2f %.2f %.2f %.2f",
-                   (double)q.w, (double)q.x, (double)q.y, (double)q.z);
-        gfx_printf(S(10), S(212), GFX_DGREY, 2, "beta %.2f", (double)BETA);
+        char line[48];
+        snprintf(line, sizeof(line), "R %+6.1f" GFX_DEG, (double)(roll * RAD_TO_DEG));
+        gfx_text_centered(DISP_CX, DEMO_ROW_TOP(0), line, GFX_WHITE, 2);
+        snprintf(line, sizeof(line), "P %+6.1f" GFX_DEG, (double)(pitch * RAD_TO_DEG));
+        gfx_text_centered(DISP_CX, DEMO_ROW_TOP(1), line, GFX_WHITE, 2);
+        snprintf(line, sizeof(line), "Y %+6.1f" GFX_DEG, (double)(yaw * RAD_TO_DEG));
+        gfx_text_centered(DISP_CX, DEMO_ROW_TOP(2), line, GFX_WHITE, 2);
+
+        snprintf(line, sizeof(line), "q %.2f %.2f %.2f %.2f",
+                 (double)q.w, (double)q.x, (double)q.y, (double)q.z);
+        gfx_text_centered(DISP_CX, DEMO_ROW_BOTTOM(1), line, GFX_GREY, 2);
+        snprintf(line, sizeof(line), "beta %.2f", (double)BETA);
+        gfx_text_centered(DISP_CX, DEMO_ROW_BOTTOM(0), line, GFX_DGREY, 2);
         demo_draw_exit_hint();
 
         demo_frame_end();

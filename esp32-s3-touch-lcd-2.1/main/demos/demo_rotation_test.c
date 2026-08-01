@@ -95,31 +95,35 @@ static void run(void)
         demo_frame_begin(GFX_BLACK);
 
         draw_3d_axes(DISP_CX, DISP_CY);
-        draw_dial(S(70), S(70), roll_angle, GFX_RED, "X");
-        draw_dial(S(170), S(70), pitch_angle, GFX_GREEN, "Y");
-        draw_dial(S(120), S(185), yaw_angle, GFX_BLUE, "Z");
+        draw_dial(140, 160, roll_angle, GFX_RED, "X");
+        draw_dial(340, 160, pitch_angle, GFX_GREEN, "Y");
+        draw_dial(DISP_CX, 290, yaw_angle, GFX_BLUE, "Z");
 
-        /* Rate bars: the original clamped them at 40 units wide. */
+        /* Rate bars, clamped at 40 units as in the original. They grow out from
+         * the centre column now so they stay inside the circle. */
         const float rates[3] = {gyro.x, gyro.y, gyro.z};
         const uint16_t colors[3] = {GFX_RED, GFX_GREEN, GFX_BLUE};
-        const int origins[3] = {S(40), S(100), S(160)};
         for (int i = 0; i < 3; i++) {
             int bar = (int)(fabsf(rates[i]) * 2.0f);
             if (bar > 40) {
                 bar = 40;
             }
             bar = (int)(bar * DISP_SCALE);
-            if (rates[i] > 1.0f) {
-                gfx_fill_rect(origins[i], S(230), bar, S(5), colors[i]);
-            } else if (rates[i] < -1.0f) {
-                gfx_fill_rect(origins[i] - bar, S(230), bar, S(5), colors[i]);
+            if (rates[i] < -1.0f) {
+                bar = -bar;
+            } else if (rates[i] <= 1.0f) {
+                bar = 0;
             }
+            gfx_fill_rect(DISP_CX, DEMO_ROW_TOP(0) + i * 10, bar, 6, colors[i]);
         }
 
-        gfx_printf(S(10), S(210), GFX_WHITE, 2, "raw %+6d %+6d %+6d",
-                   gyro_raw[0], gyro_raw[1], gyro_raw[2]);
-        gfx_printf(S(10), S(222), GFX_WHITE, 2, "dps %+6.1f %+6.1f %+6.1f",
-                   (double)gyro.x, (double)gyro.y, (double)gyro.z);
+        char line[48];
+        snprintf(line, sizeof(line), "dps %+6.1f %+6.1f %+6.1f",
+                 (double)gyro.x, (double)gyro.y, (double)gyro.z);
+        gfx_text_centered(DISP_CX, DEMO_ROW_BOTTOM(0), line, GFX_WHITE, 2);
+        snprintf(line, sizeof(line), "raw %+6d %+6d %+6d",
+                 gyro_raw[0], gyro_raw[1], gyro_raw[2]);
+        gfx_text_centered(DISP_CX, 424, line, GFX_GREY, 1);
         demo_draw_exit_hint();
 
         demo_frame_end();

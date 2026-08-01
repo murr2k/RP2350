@@ -33,6 +33,25 @@
 #define DISP_SCALE  2.0f                        /* 480 / 240 */
 #define S(v)        ((int)((v) * DISP_SCALE))   /* 1.28" coordinate -> this panel */
 
+/* The panel is a circle inscribed in that square, so the corners of the frame
+ * are not merely unused, they do not exist. The RP2350 demos anchored their
+ * status overlays at (10, 10) and similar, which on a round panel puts them
+ * behind the bezel: that text was invisible on the original hardware too.
+ *
+ * These are stacked rows that stay inside the circle. Row 0 is closest to the
+ * edge, and the 22 px pitch suits scale 2 text. Centre text on DISP_CX and
+ * anything up to about 25 characters fits. */
+#define DEMO_ROW_TOP(n)     (56 + (n) * 22)
+#define DEMO_ROW_BOTTOM(n)  (402 - (n) * 22)
+
+/** Leftmost x at which a box of the given height fits inside the circle at row
+ *  y, with a small margin. Use it to left-align bars and text on a round
+ *  screen instead of hugging x = 0. */
+int demo_safe_left(int y, int height);
+
+/** Rightmost x, same idea. */
+int demo_safe_right(int y, int height);
+
 /* --- maths ---------------------------------------------------------------- */
 
 #define PI          3.14159265359f

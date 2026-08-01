@@ -362,8 +362,8 @@ static void run(void)
                 quat_rotate_vertex(&cube[i], &s_kalman.q);
             }
             demo_draw_cube_mono(cube, CUBE_DIST, CUBE_FOCAL, GFX_GREEN);
-            draw_angle_bar(DISP_CX, S(200), kalman_pitch, GFX_GREEN);
-            draw_angle_bar(DISP_CX, S(210), kalman_roll, GFX_GREEN);
+            draw_angle_bar(DISP_CX, 340, kalman_pitch, GFX_GREEN);
+            draw_angle_bar(DISP_CX, 360, kalman_roll, GFX_GREEN);
         }
 
         if (s_display_mode == 1 || s_display_mode == 2) {
@@ -392,19 +392,24 @@ static void run(void)
             demo_draw_cube_mono(cube, CUBE_DIST, CUBE_FOCAL, GFX_RED);
 
             if (s_display_mode == 1) {
-                draw_angle_bar(DISP_CX, S(200), s_comp_pitch, GFX_RED);
-                draw_angle_bar(DISP_CX, S(210), s_comp_roll, GFX_RED);
+                draw_angle_bar(DISP_CX, 340, s_comp_pitch, GFX_RED);
+                draw_angle_bar(DISP_CX, 360, s_comp_roll, GFX_RED);
             }
         }
 
         static const char *mode_names[3] = {"KALMAN", "COMPLEMENTARY", "BOTH"};
-        gfx_printf(S(10), S(10), GFX_WHITE, 2, "mode %s", mode_names[s_display_mode]);
-        gfx_printf(S(10), S(22), GFX_GREEN, 2, "P %+6.1f R %+6.1f Y %+6.1f",
-                   (double)(kalman_pitch * RAD_TO_DEG), (double)(kalman_roll * RAD_TO_DEG),
-                   (double)(kalman_yaw * RAD_TO_DEG));
-        gfx_printf(S(10), S(222), GFX_DGREY, 2, "Kp %.2f  filter %.2f  %s",
-                   (double)s_kp_gain, (double)s_gyro_filter_alpha,
-                   s_debug_stream ? "CSV on" : "");
+        char line[48];
+
+        snprintf(line, sizeof(line), "mode %s", mode_names[s_display_mode]);
+        gfx_text_centered(DISP_CX, DEMO_ROW_TOP(0), line, GFX_WHITE, 2);
+        snprintf(line, sizeof(line), "P %+6.1f R %+6.1f Y %+6.1f",
+                 (double)(kalman_pitch * RAD_TO_DEG), (double)(kalman_roll * RAD_TO_DEG),
+                 (double)(kalman_yaw * RAD_TO_DEG));
+        gfx_text_centered(DISP_CX, DEMO_ROW_TOP(1), line, GFX_GREEN, 2);
+        snprintf(line, sizeof(line), "Kp %.2f  f %.2f %s",
+                 (double)s_kp_gain, (double)s_gyro_filter_alpha,
+                 s_debug_stream ? "CSV" : "");
+        gfx_text_centered(DISP_CX, DEMO_ROW_BOTTOM(0), line, GFX_DGREY, 2);
         demo_draw_exit_hint();
 
         demo_frame_end();

@@ -25,20 +25,84 @@ uint16_t *gfx_buffer(void)
     return s_fb;
 }
 
+/* Half width of the visible circle on each row, in pixels. */
+static int16_t s_span[H];
+static bool s_span_ready;
+
+static void build_span_table(void)
+{
+    const float r = (float)(W / 2);
+    for (int y = 0; y < H; y++) {
+        const float dy = (float)(y - H / 2) + 0.5f;
+        const float d = r * r - dy * dy;
+        int half = (d > 0.0f) ? (int)(sqrtf(d) + 1.0f) : 0;
+        if (half > W / 2) {
+            half = W / 2;
+        }
+        s_span[y] = (int16_t)half;
+    }
+    s_span_ready = true;
+}
+
+int gfx_visible_half_width(int y)
+{
+    if (!s_span_ready) {
+        build_span_table();
+    }
+    if (y < 0 || y >= H) {
+        return 0;
+    }
+    return s_span[y];
+}
+
 void gfx_clear(uint16_t color)
 {
     if (s_fb == NULL) {
         return;
     }
-    if ((color >> 8) == (color & 0xFF)) {
-        memset(s_fb, color & 0xFF, (size_t)W * H * sizeof(uint16_t));
-        return;
+    if (!s_span_ready) {
+        build_span_table();
     }
-    /* Writing 32 bits at a time roughly halves the PSRAM traffic. */
+
+    /* The panel is round: the corners of this rectangle have no pixels behind
+     * them. Clearing them is pure PSRAM traffic for something nobody can see,
+     * and PSRAM traffic is what limits the frame rate, so each row is cleared
+     * only across the visible span. That is pi/4 of the area, a fifth off the
+     * cost of the clear.
+     *
+     * Consequence worth knowing: anything drawn outside the circle is never
+     * erased again. Nothing draws there deliberately, and it cannot be seen. */
+    const bool bytewise = ((color >> 8) == (color & 0xFF));
     const uint32_t pair = ((uint32_t)color << 16) | color;
-    uint32_t *p = (uint32_t *)s_fb;
-    for (int i = 0; i < W * H / 2; i++) {
-        p[i] = pair;
+
+    for (int y = 0; y < H; y++) {
+        const int half = s_span[y];
+        if (half == 0) {
+            continue;
+        }
+
+        uint16_t *row = &s_fb[y * W + (W / 2 - half)];
+        int count = half * 2;
+
+        if (bytewise) {
+            memset(row, color & 0xFF, (size_t)count * sizeof(uint16_t));
+            continue;
+        }
+
+        /* 32 bits at a time, stepping past an odd start so the wide stores
+         * stay aligned. */
+        uint16_t *p = row;
+        if (((uintptr_t)p & 3u) != 0u) {
+            *p++ = color;
+            count--;
+        }
+        uint32_t *q = (uint32_t *)p;
+        for (int i = 0; i < count / 2; i++) {
+            q[i] = pair;
+        }
+        if ((count & 1) != 0) {
+            p[count - 1] = color;
+        }
     }
 }
 

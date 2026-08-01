@@ -53,10 +53,12 @@ static void run(void)
         /* Frame counter, drawn as dots in the original because it had no font.
          * Both are here now: the dots and the number. */
         for (uint32_t i = 0; i < (frame % 10); i++) {
-            gfx_fill_rect(S(10) + (int)i * S(3), S(10), 3, 3, GFX_YELLOW);
+            gfx_fill_rect(DISP_CX - 27 + (int)i * 6, DEMO_ROW_TOP(0), 4, 4, GFX_YELLOW);
         }
-        gfx_printf(S(10), S(20), GFX_YELLOW, 2, "frame %lu", (unsigned long)frame);
-        gfx_text_centered(DISP_CX, DISP_H - 70, "buffered_cube", GFX_DGREY, 2);
+        char label[32];
+        snprintf(label, sizeof(label), "frame %lu", (unsigned long)frame);
+        gfx_text_centered(DISP_CX, DEMO_ROW_TOP(1), label, GFX_YELLOW, 2);
+        gfx_text_centered(DISP_CX, DEMO_ROW_BOTTOM(0), "buffered_cube", GFX_DGREY, 2);
         demo_draw_exit_hint();
 
         demo_frame_end();

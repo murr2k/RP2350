@@ -113,12 +113,14 @@ static void run(void)
         draw_horizon(filtered_ax, filtered_ay);
         demo_draw_cube(rotated, CUBE_DIST, CUBE_FOCAL);
 
-        gfx_printf(S(12), S(12), GFX_WHITE, 2, "tilt X %6.1f" GFX_DEG,
-                   (double)(tilt_x * RAD_TO_DEG));
-        gfx_printf(S(12), S(24), GFX_WHITE, 2, "tilt Y %6.1f" GFX_DEG,
-                   (double)(tilt_y * RAD_TO_DEG));
-        gfx_printf(S(12), S(200), GFX_GREY, 2, "acc %+.2f %+.2f %+.2f",
-                   (double)filtered_ax, (double)filtered_ay, (double)filtered_az);
+        char line[48];
+        snprintf(line, sizeof(line), "tilt X %+5.1f" GFX_DEG "  Y %+5.1f" GFX_DEG,
+                 (double)(tilt_x * RAD_TO_DEG), (double)(tilt_y * RAD_TO_DEG));
+        gfx_text_centered(DISP_CX, DEMO_ROW_TOP(0), line, GFX_WHITE, 2);
+
+        snprintf(line, sizeof(line), "acc %+.2f %+.2f %+.2f",
+                 (double)filtered_ax, (double)filtered_ay, (double)filtered_az);
+        gfx_text_centered(DISP_CX, DEMO_ROW_BOTTOM(0), line, GFX_GREY, 2);
         demo_draw_exit_hint();
 
         demo_frame_end();

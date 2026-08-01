@@ -228,23 +228,27 @@ static void draw_sensor_data(void)
 {
     static const uint16_t colors[3] = {GFX_RED, GFX_GREEN, GFX_BLUE};
 
-    /* Accelerometer bars along the top, gyro bars along the bottom, same as
-     * the original, plus the numbers the original had no font to show. */
+    /* Accelerometer near the top, gyro near the bottom, same as the original.
+     * The bars now grow out from the centre column rather than from the left
+     * edge, which keeps them inside the circle and makes the sign readable at
+     * a glance. */
+    char line[48];
+
+    snprintf(line, sizeof(line), "a %+.2f %+.2f %+.2f",
+             (double)s_last_acc[0], (double)s_last_acc[1], (double)s_last_acc[2]);
+    gfx_text_centered(DISP_CX, DEMO_ROW_TOP(0), line, GFX_WHITE, 2);
     for (int i = 0; i < 3; i++) {
-        const int y = S(10) + i * S(6);
-        const int len = (int)(fabsf(s_last_acc[i]) * S(30));
-        gfx_fill_rect(S(10), y, (s_last_acc[i] >= 0) ? len : -len, 4, colors[i]);
-    }
-    for (int i = 0; i < 3; i++) {
-        const int y = S(220) + i * S(6);
-        const int len = (int)(fabsf(s_last_gyro[i]) * S(20));
-        gfx_fill_rect(S(10), y, (s_last_gyro[i] >= 0) ? len : -len, 4, colors[i]);
+        gfx_fill_rect(DISP_CX, DEMO_ROW_TOP(1) + i * 6,
+                      (int)(s_last_acc[i] * S(30)), 4, colors[i]);
     }
 
-    gfx_printf(S(120), S(8), GFX_WHITE, 2, "a %+.2f %+.2f %+.2f",
-               (double)s_last_acc[0], (double)s_last_acc[1], (double)s_last_acc[2]);
-    gfx_printf(S(120), S(20), GFX_WHITE, 2, "g %+.2f %+.2f %+.2f",
-               (double)s_last_gyro[0], (double)s_last_gyro[1], (double)s_last_gyro[2]);
+    snprintf(line, sizeof(line), "g %+.2f %+.2f %+.2f",
+             (double)s_last_gyro[0], (double)s_last_gyro[1], (double)s_last_gyro[2]);
+    gfx_text_centered(DISP_CX, DEMO_ROW_BOTTOM(1), line, GFX_WHITE, 2);
+    for (int i = 0; i < 3; i++) {
+        gfx_fill_rect(DISP_CX, DEMO_ROW_BOTTOM(0) + i * 6,
+                      (int)(s_last_gyro[i] * S(20)), 4, colors[i]);
+    }
 }
 
 static void run(void)
@@ -301,11 +305,13 @@ static void run(void)
             draw_sensor_data();
         }
 
-        gfx_printf(S(10), S(196), GFX_DGREY, 2, "beta %.2f  inv %c%c%c%c%c%c",
-                   (double)s_config.beta,
-                   s_config.invert_ax ? 'X' : '-', s_config.invert_ay ? 'Y' : '-',
-                   s_config.invert_az ? 'Z' : '-', s_config.invert_gx ? 'X' : '-',
-                   s_config.invert_gy ? 'Y' : '-', s_config.invert_gz ? 'Z' : '-');
+        char status[48];
+        snprintf(status, sizeof(status), "beta %.2f  inv %c%c%c%c%c%c",
+                 (double)s_config.beta,
+                 s_config.invert_ax ? 'X' : '-', s_config.invert_ay ? 'Y' : '-',
+                 s_config.invert_az ? 'Z' : '-', s_config.invert_gx ? 'X' : '-',
+                 s_config.invert_gy ? 'Y' : '-', s_config.invert_gz ? 'Z' : '-');
+        gfx_text_centered(DISP_CX, DEMO_ROW_BOTTOM(2), status, GFX_DGREY, 2);
         demo_draw_exit_hint();
 
         demo_frame_end();

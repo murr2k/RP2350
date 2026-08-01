@@ -114,10 +114,13 @@ static void run(void)
         const int gy_end = DISP_CY - (int)(S(50) * cosf(phi));
         gfx_thick_line(DISP_CX, DISP_CY, gx_end, gy_end, 3, GFX_YELLOW);
 
-        gfx_printf(S(12), S(12), GFX_WHITE, 2, "angle %+7.1f" GFX_DEG,
-                   (double)(phi * RAD_TO_DEG));
-        gfx_printf(S(12), S(200), GFX_GREY, 2, "acc %+.2f %+.2f %+.2f",
-                   (double)ax, (double)ay, (double)az);
+        char line[48];
+        snprintf(line, sizeof(line), "angle %+7.1f" GFX_DEG, (double)(phi * RAD_TO_DEG));
+        gfx_text_centered(DISP_CX, DEMO_ROW_TOP(0), line, GFX_WHITE, 2);
+
+        snprintf(line, sizeof(line), "acc %+.2f %+.2f %+.2f",
+                 (double)ax, (double)ay, (double)az);
+        gfx_text_centered(DISP_CX, DEMO_ROW_BOTTOM(0), line, GFX_GREY, 2);
         demo_draw_exit_hint();
 
         demo_frame_end();

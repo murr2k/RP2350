@@ -413,18 +413,41 @@ float demo_delta_seconds(uint64_t *last_us)
     return dt;
 }
 
+/* Temporary instrumentation: where does a frame actually go? */
+static uint64_t s_t_clear, s_t_draw, s_t_present;
+static uint64_t s_mark_begin, s_mark_drawn;
+static uint32_t s_stat_frames;
+
 uint16_t *demo_frame_begin(uint16_t clear_color)
 {
+    const uint64_t t0 = demo_micros();
     uint16_t *fb = LCD_2IN1_GetBuffer();
     gfx_bind(fb);
     gfx_clear(clear_color);
+    s_mark_begin = demo_micros();
+    s_t_clear += s_mark_begin - t0;
     return fb;
 }
 
 void demo_frame_end(void)
 {
+    s_mark_drawn = demo_micros();
+    s_t_draw += s_mark_drawn - s_mark_begin;
+
     LCD_2IN1_Display(gfx_buffer());
     touch_poll();
+
+    s_t_present += demo_micros() - s_mark_drawn;
+
+    if (++s_stat_frames >= 100) {
+        printf("\n[frame us] clear %llu  draw %llu  present %llu  total %llu\n",
+               (unsigned long long)(s_t_clear / s_stat_frames),
+               (unsigned long long)(s_t_draw / s_stat_frames),
+               (unsigned long long)(s_t_present / s_stat_frames),
+               (unsigned long long)((s_t_clear + s_t_draw + s_t_present) / s_stat_frames));
+        s_t_clear = s_t_draw = s_t_present = 0;
+        s_stat_frames = 0;
+    }
 }
 
 bool demo_touch(touch_state_t *out)
@@ -436,10 +459,31 @@ bool demo_touch(touch_state_t *out)
     return s_touch.pressed;
 }
 
+int demo_safe_left(int y, int height)
+{
+    /* The tighter of the box's two edges decides how much room there is. */
+    int half = gfx_visible_half_width(y);
+    const int other = gfx_visible_half_width(y + height);
+    if (other < half) {
+        half = other;
+    }
+    half -= 6;                  /* keep clear of the bezel */
+    if (half < 0) {
+        half = 0;
+    }
+    return DISP_CX - half;
+}
+
+int demo_safe_right(int y, int height)
+{
+    return DISP_W - demo_safe_left(y, height);
+}
+
 void demo_draw_exit_hint(void)
 {
-    gfx_text_centered(DISP_CX, DISP_H - 40, "hold top of screen or press ESC to exit",
-                      GFX_DGREY, 1);
+    /* Kept short and lifted clear of the bottom arc so it stays inside the
+     * visible circle. */
+    gfx_text_centered(DISP_CX, 430, "hold top or press ESC to exit", GFX_DGREY, 1);
 }
 
 void demo_show_message(const char *title, const char *detail, uint16_t color)

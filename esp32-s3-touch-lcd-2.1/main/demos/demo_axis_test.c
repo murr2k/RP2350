@@ -66,34 +66,31 @@ static void run(void)
         draw_vector(acc.x, acc.y, acc.z, GFX_RED);
         draw_vector(gyro.x / 100.0f, gyro.y / 100.0f, gyro.z / 100.0f, GFX_GREEN);
 
-        /* Magnitude bars, kept from the original. */
-        const int ax_bar = (int)(fabsf(acc.x) * S(50));
-        const int ay_bar = (int)(fabsf(acc.y) * S(50));
-        const int az_bar = (int)(fabsf(acc.z) * S(50));
-        if (acc.x > 0.1f) {
-            gfx_fill_rect(S(10), S(10), ax_bar, 4, GFX_RED);
-        } else if (acc.x < -0.1f) {
-            gfx_fill_rect(S(10), S(16), ax_bar, 4, GFX_RGB(255, 128, 128));
-        }
-        if (acc.y > 0.1f) {
-            gfx_fill_rect(S(230), S(10), -ay_bar, 4, GFX_GREEN);
-        } else if (acc.y < -0.1f) {
-            gfx_fill_rect(S(230), S(16), -ay_bar, 4, GFX_RGB(128, 255, 128));
-        }
-        if (fabsf(acc.z) > 0.1f) {
-            gfx_fill_rect(DISP_CX - az_bar / 2, (acc.z > 0) ? S(230) : S(224),
-                          az_bar, 4, GFX_BLUE);
+        /* Magnitude bars, kept from the original, but grown out from the centre
+         * column so they stay inside the round panel. */
+        char line[64];
+        const uint16_t bar_colors[3] = {GFX_RED, GFX_GREEN, GFX_BLUE};
+        const float axes[3] = {acc.x, acc.y, acc.z};
+
+        snprintf(line, sizeof(line), "temp %.1f" GFX_DEG "C",
+                 (double)qmi8658_read_temperature());
+        gfx_text_centered(DISP_CX, DEMO_ROW_TOP(0), line, GFX_DGREY, 2);
+
+        for (int i = 0; i < 3; i++) {
+            const int bar = (fabsf(axes[i]) > 0.1f) ? (int)(axes[i] * S(50)) : 0;
+            gfx_fill_rect(DISP_CX, DEMO_ROW_TOP(1) + i * 8, bar, 5, bar_colors[i]);
         }
 
-        gfx_printf(S(10), S(196), GFX_RED, 2, "acc  %+.2f %+.2f %+.2f g",
-                   (double)acc.x, (double)acc.y, (double)acc.z);
-        gfx_printf(S(10), S(208), GFX_GREEN, 2, "gyro %+6.1f %+6.1f %+6.1f dps",
-                   (double)gyro.x, (double)gyro.y, (double)gyro.z);
-        gfx_printf(S(10), S(220), GFX_GREY, 1, "raw a %+6d %+6d %+6d   g %+6d %+6d %+6d",
-                   acc_raw[0], acc_raw[1], acc_raw[2],
-                   gyro_raw[0], gyro_raw[1], gyro_raw[2]);
-        gfx_printf(S(10), S(228), GFX_DGREY, 1, "temp %.1f" GFX_DEG "C",
-                   (double)qmi8658_read_temperature());
+        snprintf(line, sizeof(line), "acc %+.2f %+.2f %+.2f g",
+                 (double)acc.x, (double)acc.y, (double)acc.z);
+        gfx_text_centered(DISP_CX, DEMO_ROW_BOTTOM(2), line, GFX_RED, 2);
+        snprintf(line, sizeof(line), "gyro %+6.1f %+6.1f %+6.1f",
+                 (double)gyro.x, (double)gyro.y, (double)gyro.z);
+        gfx_text_centered(DISP_CX, DEMO_ROW_BOTTOM(1), line, GFX_GREEN, 2);
+        snprintf(line, sizeof(line), "raw a %+6d %+6d %+6d  g %+6d %+6d %+6d",
+                 acc_raw[0], acc_raw[1], acc_raw[2],
+                 gyro_raw[0], gyro_raw[1], gyro_raw[2]);
+        gfx_text_centered(DISP_CX, DEMO_ROW_BOTTOM(0), line, GFX_GREY, 1);
         demo_draw_exit_hint();
 
         demo_frame_end();

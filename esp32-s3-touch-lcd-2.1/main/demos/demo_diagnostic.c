@@ -50,7 +50,7 @@ static void draw_report(void)
 
     for (int i = 0; i < s_line_count; i++) {
         const uint16_t color = (strstr(s_lines[i], "MISSING") != NULL) ? GFX_RED : GFX_WHITE;
-        gfx_text(70, 74 + i * 20, s_lines[i], color, 2);
+        gfx_text_centered(DISP_CX, 74 + i * 20, s_lines[i], color, 2);
     }
     demo_draw_exit_hint();
     demo_frame_end();
@@ -75,11 +75,60 @@ static void scan_i2c(void)
     report("i2c devices %d:%s", count, found);
 }
 
+/* Temporary: what does a full-frame pass over PSRAM actually cost, and how much
+ * of it is the cache fetching lines we are about to overwrite? */
+static void bench_psram(void)
+{
+    volatile uint32_t *p = (volatile uint32_t *)LCD_2IN1_GetBuffer();
+    const size_t bytes = (size_t)LCD_2IN1_WIDTH * LCD_2IN1_HEIGHT * sizeof(uint16_t);
+    const size_t words = bytes / 4;
+    const double mb = (double)bytes / (1024.0 * 1024.0);
+    uint64_t t;
+
+    t = demo_micros();
+    memset((void *)p, 0, bytes);
+    const uint64_t t_set = demo_micros() - t;
+
+    t = demo_micros();
+    uint32_t sum = 0;
+    for (size_t i = 0; i < words; i++) {
+        sum += p[i];
+    }
+    const uint64_t t_read = demo_micros() - t;
+
+    t = demo_micros();
+    for (size_t i = 0; i < words; i++) {
+        p[i] = p[i];
+    }
+    const uint64_t t_rmw = demo_micros() - t;
+
+    /* One store per 64 byte cache line: same number of lines touched as the
+     * memset, but a sixteenth of the stores. */
+    t = demo_micros();
+    for (size_t i = 0; i < words; i += 16) {
+        p[i] = 0;
+    }
+    const uint64_t t_sparse = demo_micros() - t;
+
+    printf("\n[psram %zu KB, checksum %lu]\n", bytes / 1024, (unsigned long)sum);
+    printf("  memset      %6llu us  %5.1f MB/s\n", (unsigned long long)t_set,
+           mb / (t_set / 1000000.0));
+    printf("  read only   %6llu us  %5.1f MB/s\n", (unsigned long long)t_read,
+           mb / (t_read / 1000000.0));
+    printf("  read+write  %6llu us  %5.1f MB/s\n", (unsigned long long)t_rmw,
+           mb / (t_rmw / 1000000.0));
+    printf("  1 store/line%6llu us  %5.1f MB/s of lines\n", (unsigned long long)t_sparse,
+           mb / (t_sparse / 1000000.0));
+
+    memset((void *)p, 0, bytes);
+}
+
 static void run(void)
 {
     s_line_count = 0;
 
     printf("\n=== ESP32-S3-Touch-LCD-2.1 diagnostic ===\n");
+    bench_psram();
 
     esp_chip_info_t chip;
     esp_chip_info(&chip);
@@ -99,7 +148,7 @@ static void run(void)
         report("psram %u MB", (unsigned)(psram / (1024 * 1024)));
     }
 
-    report("heap int %u KB, psram %u KB",
+    report("heap %uK int, %uK psram",
            (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
            (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 
@@ -133,21 +182,24 @@ static void run(void)
         for (int i = 0; i < s_line_count; i++) {
             const uint16_t color =
                 (strstr(s_lines[i], "MISSING") != NULL) ? GFX_RED : GFX_WHITE;
-            gfx_text(70, 74 + i * 20, s_lines[i], color, 2);
+            gfx_text_centered(DISP_CX, 74 + i * 20, s_lines[i], color, 2);
         }
 
+        char line[48];
         if (ok) {
-            gfx_printf(70, 74 + s_line_count * 20, GFX_GREEN, 2,
-                       "acc %+.2f %+.2f %+.2f", (double)acc.x, (double)acc.y, (double)acc.z);
-            gfx_printf(70, 74 + (s_line_count + 1) * 20, GFX_GREEN, 2,
-                       "gyr %+6.1f %+6.1f %+6.1f", (double)gyro.x, (double)gyro.y,
-                       (double)gyro.z);
+            snprintf(line, sizeof(line), "acc %+.2f %+.2f %+.2f",
+                     (double)acc.x, (double)acc.y, (double)acc.z);
+            gfx_text_centered(DISP_CX, 74 + s_line_count * 20, line, GFX_GREEN, 2);
+            snprintf(line, sizeof(line), "gyr %+6.1f %+6.1f %+6.1f",
+                     (double)gyro.x, (double)gyro.y, (double)gyro.z);
+            gfx_text_centered(DISP_CX, 74 + (s_line_count + 1) * 20, line, GFX_GREEN, 2);
         }
 
         touch_state_t touch;
         if (demo_touch(&touch)) {
-            gfx_printf(70, 74 + (s_line_count + 2) * 20, GFX_YELLOW, 2,
-                       "touch %3u %3u", touch.x, touch.y);
+            snprintf(line, sizeof(line), "touch %3u %3u",
+                     (unsigned)touch.x, (unsigned)touch.y);
+            gfx_text_centered(DISP_CX, 74 + (s_line_count + 2) * 20, line, GFX_YELLOW, 2);
         }
 
         demo_draw_exit_hint();

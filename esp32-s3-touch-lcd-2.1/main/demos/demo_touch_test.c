@@ -103,14 +103,17 @@ static void run(void)
         gfx_circle(DISP_CX, DISP_CY, 239, GFX_DGREY);
         draw_canvas();
 
+        char line[48];
         if (pressed) {
             gfx_circle(touch.x, touch.y, 22, s_palette[color_index]);
-            gfx_printf(S(10), S(10), GFX_WHITE, 2, "x %3u  y %3u", touch.x, touch.y);
+            snprintf(line, sizeof(line), "x %3u  y %3u",
+                     (unsigned)touch.x, (unsigned)touch.y);
+            gfx_text_centered(DISP_CX, DEMO_ROW_TOP(0), line, GFX_WHITE, 2);
         } else {
-            gfx_text(S(10), S(10), "no contact", GFX_DGREY, 2);
+            gfx_text_centered(DISP_CX, DEMO_ROW_TOP(0), "no contact", GFX_DGREY, 2);
         }
-        gfx_printf(S(10), S(22), GFX_GREY, 2, "gesture %s",
-                   cst820_gesture_name(last_gesture));
+        snprintf(line, sizeof(line), "gesture %s", cst820_gesture_name(last_gesture));
+        gfx_text_centered(DISP_CX, DEMO_ROW_TOP(1), line, GFX_GREY, 2);
 
         for (int i = 0; i < SWATCH_COUNT; i++) {
             const int x = swatch_x(i);
