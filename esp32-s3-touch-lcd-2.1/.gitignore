@@ -1,0 +1,10 @@
+# ESP-IDF build products
+build/
+sdkconfig
+sdkconfig.old
+managed_components/
+dependencies.lock
+
+# The root .gitignore drops *.csv because the test tools write logs with that
+# extension. The partition table is a build input, not output.
+!partitions.csv

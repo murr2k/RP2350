@@ -1,0 +1,199 @@
+# Porting notes: RP2350-LCD-1.28 to ESP32-S3-Touch-LCD-2.1
+
+What changed, what stayed the same, and why. Read this before touching the
+code if you know the RP2350 tree.
+
+## Hardware side by side
+
+| | Waveshare RP2350-LCD-1.28 | Waveshare ESP32-S3-Touch-LCD-2.1 |
+|---|---|---|
+| MCU | RP2350, dual Cortex-M33 @ 150 MHz | ESP32-S3R8, dual Xtensa LX7 @ 240 MHz |
+| RAM | 520 KB SRAM | 512 KB SRAM + 8 MB octal PSRAM |
+| Flash | 4 MB | 8 or 16 MB |
+| Display | 1.28" round, 240x240, GC9A01A over SPI | 2.1" round, 480x480, ST7701S over 16-bit parallel RGB |
+| Frame | 115 KB, fits in SRAM | 450 KB, has to live in PSRAM |
+| Touch | none | CST820, I2C, single point plus gestures |
+| IMU | QMI8658 on I2C1 (GPIO6/7) | QMI8658 on the shared I2C bus (GPIO15/7) |
+| Extras | battery ADC | RTC PCF85063, microSD, battery ADC, TCA9554 IO expander |
+| Console | USB CDC from the RP2350 USB block | USB Serial/JTAG on the native USB pins |
+| Flashing | drag a .uf2 onto the RPI-RP2 drive | esptool over the serial port |
+
+Pin numbers are all in `components/board/include/board_config.h`.
+
+## Build system
+
+Pico SDK plus CMake becomes ESP-IDF plus CMake. The shape is familiar:
+`idf.py build` where you used `make`, components where the original had
+`add_library` per directory.
+
+The one structural difference: **ESP-IDF links one application per project.**
+The RP2350 tree built about twenty separate `.uf2` images and you chose a demo
+by flashing it. Here every demo is compiled into one image and chosen at
+runtime, from the touch screen or by pressing a key on the serial console. The
+demo names are unchanged, so `configurable_cube.uf2` becomes the
+`configurable_cube` entry in the launcher.
+
+| RP2350 image | Here |
+|---|---|
+| `minimal_lcd`, `waveshare_test`, `spi_test`, `waveshare_fixed` | `display_test` |
+| `buffered_cube`, `rotating_cube`, `simple_cube`, `wireframe_cube` | `buffered_cube` |
+| `intuitive_cube` | `intuitive_cube` |
+| `gravity_cube`, `gravity_locked_cube` | `gravity_locked_cube` |
+| `madgwick_cube` | `madgwick_cube` |
+| `configurable_cube` | `configurable_cube` |
+| `rotation_test` | `rotation_test` |
+| `axis_test` | `axis_test` |
+| `kalman_6dof`, `kalman_balance`, `kalman_fixed`, `quaternion_kalman` | `kalman_6dof` |
+| `kalman_6dof_config` | `kalman_6dof_config` |
+| `rp2350_diagnostic` | `diagnostic` |
+| (no counterpart) | `touch_test` |
+
+The near duplicate cube images in the original differ only in projection
+constants and how much of the IMU they use, so they collapsed into the demo
+that superseded them.
+
+## Display
+
+The GC9A01A took a stream of pixels over SPI. The ST7701S is fed by the ESP32-S3
+LCD peripheral over a 16-bit parallel RGB bus and needs a one-time register
+sequence over a 3-wire SPI link before that starts. Both halves live in
+`components/display/lcd_2in1.c`:
+
+* The init sequence is Waveshare's, verbatim, as a table. It is sent as 9-bit
+  frames (one data/command bit, then the byte) which the ESP32 SPI master
+  produces natively with `command_bits = 1, address_bits = 8`, so there is no
+  bit banging.
+* Chip select and reset are not GPIOs on this board. They hang off the TCA9554
+  expander, so `components/board/tca9554.c` has to be alive before the panel.
+* The SPI bus is released once the sequence is sent, because GPIO1 and GPIO2 are
+  also the microSD CMD and CLK lines.
+* Two frame buffers are allocated in PSRAM by the RGB driver.
+  `LCD_2IN1_Display()` on one of them flips which is being scanned out, so
+  drawing never lands on the visible frame.
+
+### API change the demos had to absorb
+
+Each RP2350 demo owned `static uint16_t frame_buffer[240*240]`. At 480x480 that
+array is 450 KB and cannot be static in internal RAM, so the buffer belongs to
+the driver now:
+
+```c
+uint16_t *fb = demo_frame_begin(GFX_BLACK);   /* grab, bind and clear */
+/* ... draw ... */
+demo_frame_end();                             /* present */
+```
+
+### Byte order
+
+The 1.28" demos wrote `((color << 8) & 0xFF00) | (color >> 8)` into every pixel,
+byte swapping RGB565 by hand because the driver pushed the buffer to SPI without
+swapping. The RGB peripheral takes RGB565 in native order, so the swap is gone
+and the colour constants finally mean what they say. If a demo looked
+off-colour on the original hardware, that is why.
+
+### Coordinates
+
+Demo geometry still uses the 240x240 numbers from the original sources and gets
+scaled on the way out, either with the `S()` macro or by `demo_project()`. The
+pictures are the same, at twice the resolution.
+
+### Text
+
+The 1.28" demos had no font. `intuitive_cube` even carries a comment saying
+"would need text rendering to display this" above a `sprintf` whose result is
+thrown away. There is a 5x7 font here (`components/display/font5x7.c`), so the
+demos show their numbers as well as their bar graphs.
+
+## IMU
+
+Same QMI8658 part, so the maths carried over untouched. Two things changed in
+`components/sensors/qmi8658.c`:
+
+1. **Range registers now match the scale factors.** The RP2350 demos wrote
+   `CTRL2 = 0x04` and `CTRL3 = 0x54` and then divided by 16384 LSB/g and
+   128 LSB/dps. `CTRL3 = 0x54` actually selects +/-512 dps, which is 64 LSB/dps,
+   so every gyro reading on the original was half the true rate. This port
+   writes `CTRL2 = 0x05` (+/-2 g, 250 Hz) and `CTRL3 = 0x45` (+/-256 dps,
+   250 Hz), which is what the README, the demos and the host test scripts all
+   assume. Angles now integrate at the right speed.
+2. **One burst read instead of twelve.** `CTRL1` enables address auto-increment
+   and all six samples come back in a single I2C transaction.
+
+Axis orientation is **not** verified on this board. The sensor sits differently
+from the 1.28" module, so run `rotation_test` and `configurable_cube` and record
+what you find in `BOARD_IMU_*` in `board_config.h`, which every demo reads.
+
+## Serial console
+
+`stdio_init_all()` plus `getchar_timeout_us(0)` becomes the USB Serial/JTAG
+peripheral. `printf` goes through the ESP-IDF console as usual; input is read
+non blocking with `usb_serial_jtag_read_bytes(..., 0)` behind
+`demo_read_char()`, which is a drop-in for `getchar_timeout_us(0)`.
+
+The command grammars are unchanged, so the host tools in the repository root
+work as they did. `tools/serial_bridge.py` is the same TCP bridge as
+`serial_bridge_fixed.py` with the port as an argument instead of hardcoded.
+
+ESC and `~` are reserved by the launcher for leaving a demo, and never reach a
+demo's command handler.
+
+### CSV field order
+
+Two quirks are preserved on purpose, because the host scripts were written
+against them:
+
+* `kalman_6dof` and `kalman_6dof_config` disagree about which angle comes first.
+  `kalman_6dof.c` put the `asin` angle in the "pitch" column;
+  `kalman_6dof_configurable.c` put the `atan2` angle there. Each demo here emits
+  what its ancestor emitted.
+* `test_injection.py` reads the angle from `parts[7]` of a `CSV,` line, which is
+  the gyro Z field, not pitch: the angle columns start at `parts[8]`. That is a
+  pre-existing bug in the host script, left alone here since it is shared with
+  the RP2350 build. Fix it in one place if you want the injection test to
+  actually check the angle.
+
+## Timing
+
+| RP2350 | Here |
+|---|---|
+| `time_us_32()` | `demo_micros()` over `esp_timer_get_time()` |
+| `sleep_ms(n)` | `demo_delay_ms(n)` over `vTaskDelay()` |
+
+`CONFIG_FREERTOS_HZ=1000` keeps the 5 ms and 10 ms loop delays meaningful, and
+yielding on every pass is what stops the task watchdog from firing.
+
+## Deliberate behaviour changes
+
+Everything else is a faithful port. These are the exceptions, all of them fixes:
+
+* **Axis swap keys work.** `configurable_cube` advertised six swap keys in its
+  menu that `process_command()` never implemented. They are implemented here:
+  accelerometer on `q`/`w`/`s`, gyroscope on `a`/`z`/`x`.
+* **Gyro scale**, as described above.
+* **Colour byte order**, as described above.
+* **`asinf()` domain guard** in `intuitive_cube`. A sharp shake pushes the
+  filtered acceleration past 1 g, where `asinf()` returns NaN and the cube
+  disappears until the filter recovers.
+* **Gyro calibration lives in the driver** rather than being repeated, slightly
+  differently, in five demos.
+
+## Not ported
+
+* `lib/config_manager.c`, `lib/data_logger.c`, `lib/event_queue.c`,
+  `lib/state_machine.c`, `drivers/common/*.c`, `include/demo_app.h`,
+  `include/event_handler.h`, `include/system_init.h`: nine-line placeholders in
+  the original, with no callers.
+* `tests/CMakeLists.txt`: refers to `test_display.c`, `mock_hardware.c` and
+  `drivers/display/graphics.c`, none of which exist in the repository.
+* `src/serial_test.c`: listed in the root `CMakeLists.txt` but absent from the
+  tree, so the original build does not complete as checked in.
+* `src/ImageData.c` and the 240x240 splash bitmap: geometry specific to the
+  1.28" panel.
+
+## Status
+
+Written against ESP-IDF v5.3. **Not compiled and not run on hardware**: no
+ESP-IDF toolchain was available in the environment where this port was written.
+Expect the usual first-build fixes. The pin map, the panel init sequence and the
+panel timings are taken from Waveshare's own sample for this board, and the
+demo logic is a direct translation of the RP2350 sources.

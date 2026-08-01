@@ -1,0 +1,46 @@
+# Defaults for the Waveshare ESP32-S3-Touch-LCD-2.1 (ESP32-S3R8: 8 MB octal PSRAM).
+# Delete sdkconfig and re-run `idf.py build` after changing anything here.
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# --- Flash -------------------------------------------------------------------
+# 8 MB is the safe setting: boards shipping 16 MB flash still boot with it.
+# Change to CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y if your board has 16 MB and you
+# want the extra space (also grow the app partition in partitions.csv).
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# --- PSRAM -------------------------------------------------------------------
+# The 480x480 RGB565 frame buffers (450 KB each, two of them) live in PSRAM.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+# Keeping code and constants in PSRAM instead of flash stops the RGB panel from
+# starving when the cache fetches from flash, which otherwise shows up as the
+# picture drifting sideways. The alternative is a bounce buffer, see lcd_2in1.c.
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
+CONFIG_SPIRAM_RODATA=y
+
+# --- CPU / cache -------------------------------------------------------------
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+
+# --- Console -----------------------------------------------------------------
+# USB-C goes straight to the ESP32-S3 native USB, so the built-in USB Serial/JTAG
+# peripheral gives the same "plug in and get a CDC port" behaviour as the Pico.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# --- FreeRTOS ----------------------------------------------------------------
+# 1 kHz tick so that the 5 ms / 10 ms demo loop delays keep their meaning.
+CONFIG_FREERTOS_HZ=1000
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# --- Build -------------------------------------------------------------------
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+# Every demo prints floats, so keep the full printf implementation.
+CONFIG_NEWLIB_NANO_FORMAT=n

@@ -1,0 +1,27 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "demo_common.c"
+        "demos/demo_buffered_cube.c"
+        "demos/demo_intuitive_cube.c"
+        "demos/demo_gravity_locked_cube.c"
+        "demos/demo_madgwick_cube.c"
+        "demos/demo_configurable_cube.c"
+        "demos/demo_rotation_test.c"
+        "demos/demo_axis_test.c"
+        "demos/demo_kalman_6dof.c"
+        "demos/demo_kalman_6dof_config.c"
+        "demos/demo_display_test.c"
+        "demos/demo_touch_test.c"
+        "demos/demo_diagnostic.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        board
+        display
+        sensors
+        driver
+        esp_timer
+        esp_psram
+        spi_flash
+)

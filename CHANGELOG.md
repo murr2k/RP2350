@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **ESP32-S3-Touch-LCD-2.1 port** (`esp32-s3-touch-lcd-2.1/`): a work-alike of
+  the whole demo collection for the Waveshare 2.1" round 480x480 touch board,
+  built with ESP-IDF instead of the Pico SDK. Same demos, same serial command
+  grammars, so the existing Python test tools drive it unchanged.
+  - ST7701S parallel RGB display driver with double buffering in PSRAM
+  - CST820 touch driver and an on-device demo launcher, replacing "flash a
+    different .uf2" with runtime demo selection
+  - 5x7 font and drawing helpers, so demos show numbers as well as bar graphs
+  - `PORTING_NOTES.md` documenting the hardware and API mapping
+- **QMI8658 range fix** carried by the port: the RP2350 sources configure
+  +/-512 dps while dividing by the +/-256 dps scale factor, halving every gyro
+  reading. The ESP32-S3 driver configures the range the demos assume.
+
 ## [2.0.0] - 2025-08-26
 
 ### Added

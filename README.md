@@ -7,6 +7,18 @@ Murray Kopit (murr2k@gmail.com)
 Date: August 24, 2025  
 License: MIT
 
+## Ports
+
+| Board | Directory | Toolchain |
+|-------|-----------|-----------|
+| Waveshare RP2350-LCD-1.28 (240x240 round) | this directory | Pico SDK 2.0.0 |
+| Waveshare ESP32-S3-Touch-LCD-2.1 (480x480 round, touch) | [`esp32-s3-touch-lcd-2.1/`](esp32-s3-touch-lcd-2.1/) | ESP-IDF 5.3 |
+
+The ESP32-S3 port is a work-alike: the same demos with the same serial command
+grammars, so the Python test tools in this directory drive either board. See
+[esp32-s3-touch-lcd-2.1/PORTING_NOTES.md](esp32-s3-touch-lcd-2.1/PORTING_NOTES.md)
+for the hardware and API mapping.
+
 ## Hardware
 
 This project is designed for the [Waveshare RP2350-LCD-1.28](https://www.waveshare.com/wiki/RP2350-LCD-1.28) development board featuring:

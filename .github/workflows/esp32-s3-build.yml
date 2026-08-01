@@ -1,0 +1,38 @@
+name: ESP32-S3-Touch-LCD-2.1 build
+
+# Compile check for the ESP32-S3 port. The RP2350 tree is not built here: its
+# root CMakeLists.txt references src/serial_test.c, which is not in the
+# repository, so it cannot build as checked in.
+
+on:
+  push:
+    paths:
+      - 'esp32-s3-touch-lcd-2.1/**'
+      - '.github/workflows/esp32-s3-build.yml'
+  pull_request:
+    paths:
+      - 'esp32-s3-touch-lcd-2.1/**'
+      - '.github/workflows/esp32-s3-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with ESP-IDF v5.3
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.3.2
+          target: esp32s3
+          path: 'esp32-s3-touch-lcd-2.1'
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32s3_lcd_demo
+          path: |
+            esp32-s3-touch-lcd-2.1/build/esp32s3_lcd_demo.bin
+            esp32-s3-touch-lcd-2.1/build/esp32s3_lcd_demo.elf
+          if-no-files-found: error

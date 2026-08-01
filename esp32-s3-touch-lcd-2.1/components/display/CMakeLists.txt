@@ -1,0 +1,12 @@
+idf_component_register(
+    SRCS
+        "lcd_2in1.c"
+        "gfx.c"
+        "font5x7.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        board
+        driver
+        esp_lcd
+)

@@ -1,0 +1,11 @@
+idf_component_register(
+    SRCS
+        "dev_config.c"
+        "tca9554.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        driver
+        esp_adc
+        esp_timer
+)
