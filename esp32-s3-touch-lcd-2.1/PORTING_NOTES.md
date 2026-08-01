@@ -220,10 +220,28 @@ runs on real hardware:
 * QMI8658 answers at 0x6b (revision 0x7c) and streams live data
 * the launcher, the ESC exit path and demo selection over the console all work
 
-Still to confirm on hardware: **the IMU axis mapping**. A board resting flat
-reads roughly ax -0.11, ay +0.06, az **-0.97** g, so the sensor's +Z points into
-the board while the demos were written expecting flat to read +1 g. Run
-`axis_test` and `rotation_test`, then set `BOARD_IMU_*` in `board_config.h`
-accordingly. The gyro also shows a sizeable zero-rate offset at rest (about
--6.0, +4.0, -0.3 dps); the demos that call `qmi8658_calibrate()` remove it,
-`axis_test` deliberately does not, so you can see it.
+Also confirmed by eye: the cube renders well formed and centred, and the picture
+is steady once the panel runs in bounce buffer mode. Touch selects demos from
+the launcher.
+
+The IMU frame was corrected against measurements. Flat with the screen up now
+reads (+0.05, -0.06, +0.98) g, matching the convention the demos expect. The
+board sits about 3 degrees off level on a desk, which shows up as a small
+resting tilt.
+
+**Open item.** The frame still has one unresolved 180 degree spin about Z, which
+decides whether tilting the board right leans the cube right or left. Both
+candidates are right-handed, so the fusion filters are correct either way and
+only the on-screen direction changes. To settle it, hold the board with its
+right-hand edge raised and read the accelerometer: the documented convention is
+"tilt right is +X", so a positive ax confirms the current mapping and a negative
+ax means switching both `BOARD_IMU_*_SIGN` lines to `{ -1.0f, 1.0f, -1.0f }`.
+
+The gyro shows a sizeable zero-rate offset at rest, about (-5.7, -3.7, +0.3)
+dps. Every fusion demo calls `qmi8658_calibrate()` and removes it; `axis_test`
+deliberately does not, so the raw offset stays visible there.
+
+Known cost, not yet addressed: the cube demos run at roughly 10 to 12 fps
+against their 20 fps target, because each frame clears all 450 KB of the buffer
+in PSRAM and then waits for VSYNC. Clearing only the region the cube occupies
+would roughly double it.
