@@ -183,7 +183,7 @@ static const char *menu_label(int index, char *buf, size_t len)
     return buf;
 }
 
-/* The clock, across the top above the list.
+/* The clock and the date, across the top above the list.
  *
  * Read from the part rather than from the system clock, so what is on screen is
  * what the RTC holds. That is the point of setting it, and once a backup cell is
@@ -192,8 +192,15 @@ static const char *menu_label(int index, char *buf, size_t len)
  * The part is only read when the second it is showing has run out, not once a
  * frame: at 40 fps that would be 40 transfers a second onto a bus the sensor
  * task already has at 250 Hz, to show a number that changes once. */
+#define CLOCK_Y     26          /* top of the time, scale 3, 21 px tall */
+#define DATE_Y      54          /* top of the line under it, scale 2, 14 px */
+
 static void draw_clock(void)
 {
+    static const char *const days[7] = {"SUN", "MON", "TUE", "WED",
+                                        "THU", "FRI", "SAT"};
+    static const char *const months[12] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                                           "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
     static pcf85063_time_t shown;
     static uint64_t read_us;
     static bool have;
@@ -204,19 +211,31 @@ static void draw_clock(void)
         read_us = now;
     }
 
-    char text[16];
-    uint16_t color = GFX_WHITE;
-    if (have) {
-        snprintf(text, sizeof(text), "%02u:%02u:%02u",
-                 shown.hour, shown.minute, shown.second);
-    } else {
-        /* Nothing worth showing yet, so the space says what it is waiting for
-         * instead of sitting blank. */
-        snprintf(text, sizeof(text), "--:--:--");
-        color = (net_time_state() == NET_TIME_FAILED) ? GFX_DGREY
-                                                      : gfx_dim(GFX_WHITE, 6, 16);
+    char text[32];
+
+    if (!have) {
+        /* Nothing worth showing yet, so the space below says what it is waiting
+         * on rather than sitting blank or showing a date of nowhere. */
+        const bool failed = net_time_state() == NET_TIME_FAILED;
+        gfx_text_centered(DISP_CX, CLOCK_Y, "--:--:--",
+                          failed ? GFX_DGREY : gfx_dim(GFX_WHITE, 6, 16), 3);
+        snprintf(text, sizeof(text), "TIME %s", net_time_status());
+        gfx_text_centered(DISP_CX, DATE_Y, text, failed ? GFX_DGREY : GFX_GREY, 2);
+        return;
     }
-    gfx_text_centered(DISP_CX, 34, text, color, 3);
+
+    snprintf(text, sizeof(text), "%02u:%02u:%02u",
+             shown.hour, shown.minute, shown.second);
+    gfx_text_centered(DISP_CX, CLOCK_Y, text, GFX_WHITE, 3);
+
+    /* Both indices come off the part, so neither is trusted to be in range: a
+     * clock that has lost power reads back whatever it likes. */
+    const char *day = (shown.weekday < 7) ? days[shown.weekday] : "---";
+    const char *month = (shown.month >= 1 && shown.month <= 12)
+                            ? months[shown.month - 1] : "---";
+    snprintf(text, sizeof(text), "%s %02u %s %04u",
+             day, shown.day, month, shown.year);
+    gfx_text_centered(DISP_CX, DATE_Y, text, GFX_GREY, 2);
 }
 
 static void draw_carousel(float scroll)
@@ -233,8 +252,15 @@ static void draw_carousel(float scroll)
     for (int i = 0; i < DEMO_COUNT; i++) {
         const int dy = (int)(((float)i - scroll) * CAROUSEL_PITCH);
         const int distance = abs(dy);
-        if (distance > 230) {
-            continue;               /* past the bezel */
+
+        /* Downward the list runs out at the bezel. Upward it has to be gone
+         * before the date, so it fades over a shorter run rather than being cut
+         * off at a line: an item that climbed to the top of the screen would
+         * otherwise arrive over the clock, faint but there, at whichever scroll
+         * positions happened to put it there. */
+        const int reach = (dy < 0) ? (DISP_CY - DATE_Y - 22) : 230;
+        if (distance > reach) {
+            continue;
         }
 
         /* Three tiers, because the font only comes in whole scales. */
@@ -253,7 +279,7 @@ static void draw_carousel(float scroll)
 
         /* Fade into the bezel, so the ends of the list dissolve rather than
          * being clipped by the glass. */
-        const int fade = 16 - (distance * 16) / 230;
+        const int fade = 16 - (distance * 16) / reach;
         if (fade < level) {
             level = fade;
         }
