@@ -5,7 +5,9 @@ Waveshare ESP32-S3-Touch-LCD-2.1: a 2.1" round 480x480 touch display with the
 same QMI8658 6-axis IMU behind it.
 
 Same demos, same serial protocols, same host-side test tools. See
-[PORTING_NOTES.md](PORTING_NOTES.md) for what had to change and why.
+[PORTING_NOTES.md](PORTING_NOTES.md) for what had to change and why, and
+[ARCHITECTURE_LOG.md](ARCHITECTURE_LOG.md) for how the display and sensor
+architecture arrived at its present shape, measurement by measurement.
 
 ## Author
 
