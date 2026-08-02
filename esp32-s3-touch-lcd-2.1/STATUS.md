@@ -8,37 +8,44 @@ See [ARCHITECTURE_LOG.md](ARCHITECTURE_LOG.md) for how it got here and
 
 | | |
 |---|---|
-| Picker | Taps land on the right item, no self-relaunch on exit |
-| Aberrant pixels | Gone. Was a composition overrun at 58 fps |
-| Ball smearing | Gone. Animation is time based rather than per frame |
 | Panel | 11 MHz, 40 Hz refresh, 498 us per bounce buffer |
 | Worst demo | `display_test` at 399 us, 89% of the trim threshold |
-| Rain | Sums in intensity so crossings flare, wake behind the front |
-| IMU axes | Settled by tilting: the sensor is mounted a quarter turn round |
 | Overrun | A frame too expensive to draw trims itself instead of freezing the panel |
+| IMU axes | Settled by tilting: the sensor is mounted a quarter turn round |
+| `intuitive_cube` | Quaternions, so it turns through any attitude without a clamp |
+| `finger_cube` | Trackball, sensitive to how fast the finger is going |
+| Picker | Caps, taller rows, calmer flinging; taps land, no self-relaunch |
+| Clock | Fetched over WiFi at boot into the PCF85063, time and date on the picker |
+| Rain | Sums in intensity so crossings flare, wake behind the front |
 | Everything else | 14 demos launch, no panics, filters at 250 Hz on core 1 |
 
-## Open items
-
-**1. The picker needs tweaking.** Reported as "could use some tweaking" without
-specifics. The question to settle before changing anything: is it the scroll
-distance per drag, the snap being too eager, or the fling carrying too far? The
-constants are at the top of `main/main.c`:
+The picker constants, all at the top of `main/main.c`, since they are the ones
+most likely to want turning again:
 
 | | | |
 |---|---|---|
-| `CAROUSEL_PITCH` | 64 | pixels between items |
-| `CAROUSEL_FRICTION` | 6.0 | higher stops a fling sooner |
+| `CAROUSEL_PITCH` | 84 | pixels between items |
+| `CAROUSEL_FRICTION` | 7.0 | higher stops a fling sooner |
 | `CAROUSEL_SNAP` | 14.0 | higher pulls to centre harder |
 | `CAROUSEL_TAP_SLOP` | 12 | pixels of movement still counted as a tap |
-| `CAROUSEL_MAX_FLING` | 14.0 | items per second |
+| `CAROUSEL_MAX_FLING` | 7.0 | items per second |
 
-**2. `intuitive_cube` cannot see heading, and it shows.** Turning the board flat
+A fling carries `MAX_FLING / FRICTION` items past the finger, currently one.
+
+## Open items
+
+**1. `intuitive_cube` cannot see heading, and it shows.** Turning the board flat
 on the table spins the cube about the screen normal. That is not a bug in the
 demo: gravity is unchanged by that motion, so an accelerometer alone has no way
 to know it happened, and the demo carries the unobservable degree of freedom
 over rather than inventing one. Fixing it means bringing the gyroscope in, which
 is what `madgwick_cube` and the Kalman demos already do. Deferred deliberately.
+
+**2. The clock has no backup cell**, so the PCF85063 comes up after every power
+cycle with its oscillator stop flag set and the time is fetched over the network
+instead. Fitting one needs no code change: the flag stops coming up set and the
+fetch becomes a correction rather than the only source. Out of WiFi range and
+without the cell, the picker simply shows `--:--:--`.
 
 **3. The instrumentation is still in the build**, by request. It prints a frame
 breakdown every 100 frames from `demo_frame_end()` and runs a PSRAM benchmark in
@@ -70,12 +77,29 @@ point and the count register never reports one. `touch_test` shows the live
 count. A one finger equivalent of a two finger twist would be an arcball, where
 dragging around the rim turns the model about the screen normal.
 
+**No LVGL, and no external dependencies at all**: there is not even a component
+manager manifest. Drawing is `components/display/gfx.c`, about 700 lines of font,
+integer rasterisers and display list. LVGL is retained mode and needs somewhere
+to render into before flushing, which is exactly what this architecture does not
+have, so adopting it would mean reinstating the frame buffer and the copy that
+the whole design exists to avoid. Considered and declined on 2 August 2026;
+LVGL is being explored in a separate project instead. The board bring up is what
+would carry over: the ST7701S sequence, the 9 bit SPI that drives it, the touch
+and expander drivers, and `sdkconfig.defaults`.
+
 ## Working notes
 
 * The board is on **COM3**, a CH343 bridge on the socket marked **UART**. The
   socket marked USB only enumerates if the firmware brings it up.
+* Opening the serial port resets the board. Wait a few seconds after opening
+  before sending keys to the demo menu, or they land during boot and are lost.
 * There is no local ESP-IDF. Build in Docker and flash with esptool; both
   commands are in [ROLLBACK.md](ROLLBACK.md).
+* WiFi credentials are in `main/wifi_secrets.h`, gitignored because the GitHub
+  repo is public. `wifi_secrets.h.example` shows the shape. The radio comes up
+  only to fetch the time and is then shut down: while associated it tripled the
+  render loop's per frame cost, since the WiFi stack executes from the same
+  PSRAM the composer reads.
 * Composition happens in the panel's interrupt against a hard deadline that
   `LCD_2IN1_ComposeBudgetUs()` reports. Anything visually dense added later
   should watch `LCD_2IN1_ComposeMaxUs()` and trim itself rather than trusting a
