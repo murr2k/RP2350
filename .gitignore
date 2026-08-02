@@ -111,3 +111,7 @@ Thumbs.db
 .Trashes
 .Spotlight-V100
 .TemporaryItems
+
+# Local network credentials. This repository is public: keep them out of it.
+# See esp32-s3-touch-lcd-2.1/main/wifi_secrets.h.example
+wifi_secrets.h

@@ -54,6 +54,12 @@ CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y
 CONFIG_FREERTOS_HZ=1000
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 
+# WiFi and IP event handlers run on this one, and the full printf below wants
+# far more stack than the cut down version the default size assumes. At 2304 it
+# overflowed inside the event loop and brought the system down with a corrupted
+# mutex, which reads as a FreeRTOS queue assert and not as a stack problem.
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
+
 # --- Build -------------------------------------------------------------------
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # Every demo prints floats, so keep the full printf implementation.

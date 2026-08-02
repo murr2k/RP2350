@@ -16,6 +16,8 @@
 #include "board_config.h"
 #include "demo_common.h"
 #include "dev_config.h"
+#include "net_time.h"
+#include "rtc_pcf85063.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
@@ -181,9 +183,46 @@ static const char *menu_label(int index, char *buf, size_t len)
     return buf;
 }
 
+/* The clock, across the top above the list.
+ *
+ * Read from the part rather than from the system clock, so what is on screen is
+ * what the RTC holds. That is the point of setting it, and once a backup cell is
+ * fitted it will be the only one of the two that survives a power cycle.
+ *
+ * The part is only read when the second it is showing has run out, not once a
+ * frame: at 40 fps that would be 40 transfers a second onto a bus the sensor
+ * task already has at 250 Hz, to show a number that changes once. */
+static void draw_clock(void)
+{
+    static pcf85063_time_t shown;
+    static uint64_t read_us;
+    static bool have;
+
+    const uint64_t now = demo_micros();
+    if (!have || now - read_us >= 1000000ULL) {
+        have = pcf85063_get(&shown) && pcf85063_running();
+        read_us = now;
+    }
+
+    char text[16];
+    uint16_t color = GFX_WHITE;
+    if (have) {
+        snprintf(text, sizeof(text), "%02u:%02u:%02u",
+                 shown.hour, shown.minute, shown.second);
+    } else {
+        /* Nothing worth showing yet, so the space says what it is waiting for
+         * instead of sitting blank. */
+        snprintf(text, sizeof(text), "--:--:--");
+        color = (net_time_state() == NET_TIME_FAILED) ? GFX_DGREY
+                                                      : gfx_dim(GFX_WHITE, 6, 16);
+    }
+    gfx_text_centered(DISP_CX, 34, text, color, 3);
+}
+
 static void draw_carousel(float scroll)
 {
     demo_frame_begin(GFX_BLACK);
+    draw_clock();
 
     /* The detent, drawn faintly so the centre reads as the selection without
      * needing a highlight bar. */
@@ -235,10 +274,11 @@ static void draw_carousel(float scroll)
     gfx_text_centered(DISP_CX, DISP_CY + CAROUSEL_PITCH / 2 + 12,
                       s_demos[centred]->summary, GFX_DGREY, 1);
 
-    char status[64];
-    snprintf(status, sizeof(status), "IMU %s   TOUCH %s   BAT %.2fV",
+    char status[80];
+    snprintf(status, sizeof(status), "IMU %s   TOUCH %s   TIME %s   BAT %.2fV",
              qmi8658_present() ? "ok" : "--",
              cst820_present() ? "ok" : "--",
+             net_time_status(),
              DEV_Battery_Volts());
     gfx_text_centered(DISP_CX, DISP_H - 62, status, GFX_GREY, 1);
     gfx_text_centered(DISP_CX, DISP_H - 48, "drag to scroll, tap the middle to start",
@@ -475,10 +515,17 @@ void app_main(void)
     if (!qmi8658_init()) {
         ESP_LOGW(TAG, "IMU missing, the motion demos will show a warning");
     }
+    if (!pcf85063_init()) {
+        ESP_LOGW(TAG, "clock missing, the picker will not show a time");
+    }
 
     /* Sensor acquisition and the demos' filters live on the other core, so the
      * frame budget carries only drawing. */
     demo_sensor_start();
+
+    /* Goes off and fetches the time in the background, then puts the radio back
+     * down. The picker is up and usable throughout. */
+    net_time_start();
 
     for (;;) {
         const int index = menu_select();

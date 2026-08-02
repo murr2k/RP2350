@@ -18,6 +18,8 @@
 #include "esp_heap_caps.h"
 #include "esp_psram.h"
 #include "esp_system.h"
+#include "net_time.h"
+#include "rtc_pcf85063.h"
 #include "tca9554.h"
 
 #define MAX_LINES 18
@@ -176,6 +178,14 @@ static void run(void)
     report("rtc 0x%02x %s", BOARD_RTC_ADDR,
            DEV_I2C_Probe(BOARD_RTC_ADDR) ? "ok" : "MISSING");
     demo_sensor_pause(false);
+
+    pcf85063_time_t clock;
+    if (pcf85063_get(&clock)) {
+        report("time %04u-%02u-%02u %02u:%02u:%02u %s (net %s)",
+               clock.year, clock.month, clock.day,
+               clock.hour, clock.minute, clock.second,
+               pcf85063_running() ? "" : "UNSET", net_time_status());
+    }
 
     report("lcd %dx%d, %d MHz pclk", DISP_W, DISP_H, BOARD_LCD_PCLK_HZ / 1000000);
     report("battery %.2f V", (double)DEV_Battery_Volts());

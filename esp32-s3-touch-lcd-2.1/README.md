@@ -53,6 +53,40 @@ pressing its key on the serial console.
 To leave a demo and come back to the menu: **hold a finger near the top of the
 screen** for about half a second, or press **ESC** (or `~`) on the console.
 
+## The clock
+
+The picker shows the time of day, read from the PCF85063 on the I2C bus. There
+is no backup cell fitted, so the part comes up after every power cycle with its
+oscillator stop flag set and no idea what time it is. The firmware therefore
+joins a network at boot, asks an NTP server, sets the clock and **takes the
+radio straight back down**. It shows `--:--:--` until that lands, and the status
+line along the bottom says where it has got to.
+
+Taking the radio down again is not tidiness. The panel has no frame buffer and
+composes each row inside an interrupt against a deadline set by the pixel clock,
+and with XIP enabled the WiFi stack executes from the same PSRAM the composer is
+reading. Staying associated would put an unpredictable second consumer on that
+bandwidth permanently, for a reading taken once. Measured across the fetch:
+composition never moved from its usual 203 to 267 us against a 448 us trim
+threshold, and no rows were ever dropped. What did move was the render loop,
+from about 250 us a frame to 750 us while the radio was up. That is the cost,
+and it is why it does not stay up.
+
+To point it at your own network, copy the example and fill it in:
+
+```sh
+cp main/wifi_secrets.h.example main/wifi_secrets.h
+```
+
+`wifi_secrets.h` is in `.gitignore`, because this repository is public and a
+password committed once stays in the history whatever you do to it afterwards.
+Without the file the firmware still builds and runs; it reports `TIME no net`
+and leaves the clock unset.
+
+The zone is one line at the top of `main/net_time.c`, a POSIX TZ string. It ships
+set to US Pacific, and the two rules on the end are the summer time changeover,
+so the clock stays right across it without anyone touching anything.
+
 ## Build environment
 
 ### Prerequisites

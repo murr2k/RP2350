@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "dev_config.c"
         "tca9554.c"
+        "rtc_pcf85063.c"
     INCLUDE_DIRS
         "include"
     REQUIRES

@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "main.c"
         "demo_common.c"
+        "net_time.c"
         "demos/demo_buffered_cube.c"
         "demos/demo_finger_cube.c"
         "demos/demo_intuitive_cube.c"
@@ -26,4 +27,9 @@ idf_component_register(
         esp_timer
         esp_psram
         spi_flash
+        esp_wifi
+        esp_netif
+        esp_event
+        lwip
+        nvs_flash
 )
