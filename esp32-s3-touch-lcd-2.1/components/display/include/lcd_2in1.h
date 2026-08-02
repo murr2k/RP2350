@@ -54,12 +54,16 @@ void LCD_2IN1_Display(uint16_t *Image);
 /** Longest and most recent time spent composing one bounce buffer, in
  *  microseconds. Reading the maximum resets it.
  *
- *  The budget is about 342 us, the time the other bounce buffer takes to drain.
- *  Going over does not degrade gracefully: the composer falls behind the DMA and
- *  the frame boundary event stops arriving, which shows up as every frame
- *  waiting out the 100 ms backstop. */
+ *  Going over the budget does not degrade gracefully: the composer falls behind
+ *  the DMA and the frame boundary event stops arriving, which shows up as every
+ *  frame waiting out the 100 ms backstop. Anything expensive should watch this
+ *  and trim itself. */
 uint32_t LCD_2IN1_ComposeMaxUs(void);
 uint32_t LCD_2IN1_ComposeLastUs(void);
+
+/** How long composing one bounce buffer may take, in microseconds. Derived from
+ *  the pixel clock: the time the other bounce buffer takes to drain. */
+uint32_t LCD_2IN1_ComposeBudgetUs(void);
 
 /** Fill every buffer with a colour and show it. */
 void LCD_2IN1_Clear(uint16_t Color);

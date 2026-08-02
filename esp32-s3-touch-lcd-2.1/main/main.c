@@ -223,6 +223,14 @@ static int menu_select(void)
     float drag_start_scroll = 0.0f;
     int drag_travel = 0;
     int last_y = 0;
+    int press_y = DISP_CY;      /* last position while actually touched: the
+                                 * release event carries no coordinates */
+
+    /* A demo is usually left by holding a finger on the glass, so on the way
+     * back in the finger is still down. Wait for it to lift before listening,
+     * or that same contact is read as a tap and relaunches what was just
+     * exited. */
+    bool armed = !cst820_present();
     uint64_t last_sample_us = 0;
     uint64_t last_frame_us = demo_micros();
     uint64_t last_input_us = demo_micros();
@@ -264,9 +272,18 @@ static int menu_select(void)
         }
 
         touch_state_t touch;
-        const bool pressed = demo_touch(&touch);
+        bool pressed = demo_touch(&touch);
         if (pressed) {
             last_input_us = now;
+            press_y = touch.y;
+        }
+
+        if (!armed) {
+            /* Still carrying the contact that left the last demo. */
+            if (!pressed) {
+                armed = true;
+            }
+            pressed = false;
         }
 
         if (now - last_input_us > SCREENSAVER_IDLE_US) {
@@ -278,6 +295,7 @@ static int menu_select(void)
             announced = -1;
             dragging = false;
             velocity = 0.0f;
+            armed = !cst820_present();  /* the dismissing touch is still down */
             continue;
         }
 
@@ -312,12 +330,16 @@ static int menu_select(void)
 
             if (drag_travel <= CAROUSEL_TAP_SLOP) {
                 /* A tap. On the centred item it starts; anywhere else it brings
-                 * that item to the middle, which is forgiving of near misses. */
+                 * that item to the middle, which is forgiving of near misses.
+                 *
+                 * The position comes from the last frame the finger was still
+                 * down: the release itself reports no coordinates, and reading
+                 * them anyway put every tap three items above where it was. */
                 velocity = 0.0f;
                 const int centred = (int)clampf(s_scroll + 0.5f, 0.0f,
                                                (float)(DEMO_COUNT - 1));
                 const int tapped = (int)clampf(
-                    s_scroll + (float)(touch.y - DISP_CY) / CAROUSEL_PITCH + 0.5f,
+                    s_scroll + (float)(press_y - DISP_CY) / CAROUSEL_PITCH + 0.5f,
                     0.0f, (float)(DEMO_COUNT - 1));
                 if (tapped == centred) {
                     s_scroll = (float)centred;

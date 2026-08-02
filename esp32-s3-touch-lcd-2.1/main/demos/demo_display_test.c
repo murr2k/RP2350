@@ -20,20 +20,45 @@ static void solid(uint16_t color, const char *label, uint16_t text_color)
 }
 
 /* Nothing describes a per pixel gradient as a primitive, so it paints its own
- * rows. Recorded like anything else, so the label below still lands on top. */
+ * rows. Recorded like anything else, so the label below still lands on top.
+ *
+ * This runs in the panel's interrupt for every visible row, so the arithmetic
+ * that depends only on x is done once into tables and the inner loop is two
+ * lookups. Doing it per pixel made this the most expensive thing in the whole
+ * firmware. */
+static uint8_t s_grad_r[DISP_W];
+static uint8_t s_grad_b[DISP_W];
+static bool s_grad_ready;
+
+static void gradient_tables(void)
+{
+    for (int x = 0; x < DISP_W; x++) {
+        s_grad_r[x] = (uint8_t)(x * 255 / DISP_W);
+        s_grad_b[x] = (uint8_t)((x * 255) / (DISP_W + DISP_H));
+    }
+    s_grad_ready = true;
+}
+
 static void gradient_row(int y, uint16_t *row, void *ctx)
 {
     (void)ctx;
+    const int g = y * 255 / DISP_H;
+    const int b_row = 255 - (y * 255) / (DISP_W + DISP_H);
+
     for (int x = 0; x < DISP_W; x++) {
-        const uint8_t r = (uint8_t)(x * 255 / DISP_W);
-        const uint8_t g = (uint8_t)(y * 255 / DISP_H);
-        const uint8_t b = (uint8_t)(255 - (x + y) * 255 / (DISP_W + DISP_H));
-        row[x] = GFX_RGB(r, g, b);
+        int b = b_row - (int)s_grad_b[x];
+        if (b < 0) {
+            b = 0;
+        }
+        row[x] = GFX_RGB(s_grad_r[x], g, b);
     }
 }
 
 static void gradient(void)
 {
+    if (!s_grad_ready) {
+        gradient_tables();
+    }
     demo_frame_begin(GFX_BLACK);
     gfx_row_painter(gradient_row, NULL);
     gfx_text_centered(DISP_CX, 40, "RGB565 GRADIENT", GFX_WHITE, 2);
@@ -94,11 +119,13 @@ static void backlight_sweep(void)
     DEV_SET_PWM(100);
 }
 
-static void animated_page(int frame)
+/* Angle comes in as an accumulated time, not a frame count. Stepping per frame
+ * meant the balls sped up threefold when the sleeps were removed, which the
+ * panel showed as smearing rather than six discrete dots. */
+static void animated_page(float t, uint32_t frame)
 {
     demo_frame_begin(GFX_BLACK);
 
-    const float t = (float)frame * 0.08f;
     for (int i = 0; i < 6; i++) {
         const float a = t + (float)i * (TWO_PI / 6.0f);
         const int x = DISP_CX + (int)(150.0f * cosf(a));
@@ -110,7 +137,8 @@ static void animated_page(int frame)
 
     gfx_circle(DISP_CX, DISP_CY, 239, GFX_DGREY);
     gfx_text_centered(DISP_CX, DISP_CY - 30, "DISPLAY TEST", GFX_WHITE, 3);
-    gfx_printf(DISP_CX - 60, DISP_CY + 10, GFX_GREY, 2, "frame %d", frame);
+    gfx_printf(DISP_CX - 60, DISP_CY + 10, GFX_GREY, 2, "frame %lu",
+               (unsigned long)frame);
     demo_draw_exit_hint();
 
     demo_frame_end();
@@ -141,9 +169,13 @@ static void run(void)
         backlight_sweep();
     }
 
-    int frame = 0;
+    uint32_t frame = 0;
+    float angle = 0.0f;
+    uint64_t last_us = demo_micros();
+
     while (!demo_exit_requested()) {
-        animated_page(frame++);
+        angle += 1.6f * demo_delta_seconds(&last_us);   /* was 0.08 per frame */
+        animated_page(angle, frame++);
     }
 }
 

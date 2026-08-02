@@ -274,6 +274,37 @@ rasteriser lives in PSRAM and calls into the standard library; nothing here
 writes flash at runtime, which is the only thing that would pull the cache out
 from under it.
 
+### The pixel clock is a composition budget, not just a frame rate
+
+Waveshare's sample runs this panel at 16 MHz, which is 58.5 Hz. That was kept
+through the frame buffer era, where it only decided how often the DMA read
+memory. Once the display was composed on demand it became something else: the
+pixel clock sets how long the interrupt has to produce each row, and nothing
+here needs 58 frames a second.
+
+At 16 MHz a bounce buffer of ten rows had to be ready in 342 us. `display_test`
+needed 440, so it overran on every frame, which showed on the glass as small
+groups of wrong pixels in consistent places. Not random, because the overrun was
+not random.
+
+Dropping to 11 MHz gives 40 Hz and 498 us per buffer. With that, plus merging
+runs of lit columns in the text rasteriser and tabulating the gradient's per
+column arithmetic, the worst demo sits at 387 us, 78% of budget, and the rest
+are between a third and a half:
+
+| | at 16 MHz, 342 us | at 11 MHz, 498 us |
+|---|---|---|
+| `display_test` | 440 us, over budget | 387 us, 78% |
+| `rain` | 376 us | 291 us, 58% |
+| `buffered_cube` | 249 us | 178 us, 36% |
+| the rest | 162 to 206 us | 170 to 190 us, about 37% |
+
+Everything timing related now derives from `BOARD_LCD_PCLK_HZ`, and
+`LCD_2IN1_ComposeBudgetUs()` reports the deadline, so moving the clock moves the
+budget and anything self-tuning with it. Watch the intermediate arithmetic:
+`H_TOTAL * 1000000000` overflows 32 bits and quietly reported a 2 us budget,
+which starved the rain screensaver to its minimum quality before anyone noticed.
+
 ### What composing on demand costs, and what it does not suit
 
 Dropping the frame buffer changed what a frame costs, in a way worth knowing

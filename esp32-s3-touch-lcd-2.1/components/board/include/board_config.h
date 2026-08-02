@@ -56,14 +56,31 @@
     17, /* D15 R4 */               \
 }
 
-/* Panel timing, from the Waveshare ST7701S sample for this board. */
-#define BOARD_LCD_PCLK_HZ           (16 * 1000 * 1000)
+/* Panel timing, porches from the Waveshare ST7701S sample for this board.
+ *
+ * The pixel clock is below Waveshare's 16 MHz on purpose. Nothing here needs
+ * 58 fps, and since the display is composed on demand rather than streamed from
+ * a frame buffer, the pixel clock is what sets how long the interrupt has to
+ * produce each row. Slower clock, more time per row, more margin against the
+ * composer being late. 11 MHz gives about 40 fps and 50 us per row where 16 MHz
+ * gave 58 fps and 34 us. */
+#define BOARD_LCD_PCLK_HZ           (11 * 1000 * 1000)
 #define BOARD_LCD_HSYNC_PULSE_WIDTH 8
 #define BOARD_LCD_HSYNC_BACK_PORCH  10
 #define BOARD_LCD_HSYNC_FRONT_PORCH 50
 #define BOARD_LCD_VSYNC_PULSE_WIDTH 3
 #define BOARD_LCD_VSYNC_BACK_PORCH  8
 #define BOARD_LCD_VSYNC_FRONT_PORCH 8
+
+/* Everything timing related is derived from those, so changing the clock cannot
+ * leave a stale constant behind. */
+#define BOARD_LCD_H_TOTAL (BOARD_LCD_HSYNC_PULSE_WIDTH + BOARD_LCD_HSYNC_BACK_PORCH + \
+                           BOARD_LCD_WIDTH + BOARD_LCD_HSYNC_FRONT_PORCH)
+#define BOARD_LCD_V_TOTAL (BOARD_LCD_VSYNC_PULSE_WIDTH + BOARD_LCD_VSYNC_BACK_PORCH + \
+                           BOARD_LCD_HEIGHT + BOARD_LCD_VSYNC_FRONT_PORCH)
+/* Scaled so the intermediate stays inside 32 bits: H_TOTAL * 1e9 does not. */
+#define BOARD_LCD_LINE_NS ((BOARD_LCD_H_TOTAL * 1000u) / (BOARD_LCD_PCLK_HZ / 1000000u))
+#define BOARD_LCD_REFRESH_HZ (BOARD_LCD_PCLK_HZ / (BOARD_LCD_H_TOTAL * BOARD_LCD_V_TOTAL))
 
 /* Backlight is a plain GPIO driven by LEDC (the Pico used a PWM slice). */
 #define BOARD_LCD_BL_GPIO           6

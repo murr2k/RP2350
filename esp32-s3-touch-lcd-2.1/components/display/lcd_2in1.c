@@ -20,11 +20,14 @@
  *
  * The deadline is one buffer, not two. When the DMA finishes a buffer it starts
  * on the other one immediately, so the refill has exactly as long as that other
- * buffer takes to drain: BOUNCE_LINES lines at 34.3 us each, about 342 us for
- * ten. Overrun it and the composer falls behind the DMA, the bounce position
- * never wraps, and the frame boundary event stops arriving altogether. */
+ * buffer takes to drain. Overrun it and the composer falls behind the DMA, the
+ * bounce position never wraps, and the frame boundary event stops arriving
+ * altogether, which shows up as every frame waiting out the 100 ms backstop.
+ *
+ * Derived from the pixel clock, so changing the clock moves the deadline with
+ * it rather than leaving this behind as a lie. */
 #define BOUNCE_LINES 10
-#define BOUNCE_BUDGET_US 342
+#define BOUNCE_BUDGET_US ((BOUNCE_LINES * BOARD_LCD_LINE_NS) / 1000u)
 
 static const char *TAG = "lcd";
 
@@ -47,6 +50,11 @@ uint32_t LCD_2IN1_ComposeMaxUs(void)
 uint32_t LCD_2IN1_ComposeLastUs(void)
 {
     return s_compose_last_us;
+}
+
+uint32_t LCD_2IN1_ComposeBudgetUs(void)
+{
+    return BOUNCE_BUDGET_US;
 }
 
 /* The panel asks for the next few rows whenever its DMA has drained a bounce
@@ -364,8 +372,12 @@ esp_err_t LCD_2IN1_Init(uint8_t Scan_dir)
     LCD_2IN1_Clear(0x0000);
     DEV_SET_PWM(backlight);
 
-    ESP_LOGI(TAG, "ST7701S up: %dx%d, %d MHz pixel clock, composed on demand, no frame buffer",
-             LCD_2IN1_WIDTH, LCD_2IN1_HEIGHT, BOARD_LCD_PCLK_HZ / 1000000);
+    ESP_LOGI(TAG,
+             "ST7701S up: %dx%d, %d MHz pixel clock, %lu Hz refresh, composed on demand, "
+             "%lu us per bounce buffer of %d rows",
+             LCD_2IN1_WIDTH, LCD_2IN1_HEIGHT, BOARD_LCD_PCLK_HZ / 1000000,
+             (unsigned long)BOARD_LCD_REFRESH_HZ, (unsigned long)BOUNCE_BUDGET_US,
+             BOUNCE_LINES);
     return ESP_OK;
 }
 

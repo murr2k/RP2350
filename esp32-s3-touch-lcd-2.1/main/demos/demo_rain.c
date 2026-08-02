@@ -72,9 +72,10 @@ static drop_t s_drops[RAIN_MAX_ACTIVE];
  * Overrunning is not a graceful degradation. The composer falls behind the DMA,
  * the bounce position stops wrapping, the frame boundary event never arrives,
  * and every frame waits out the 100 ms backstop. So the target leaves room. */
-#define RAIN_BUDGET_US      342
-#define RAIN_TARGET_US      290
-#define RAIN_RELAX_US       190
+/* Taken from the driver rather than assumed, so changing the pixel clock moves
+ * these with it. */
+#define RAIN_TARGET_US      ((LCD_2IN1_ComposeBudgetUs() * 85u) / 100u)
+#define RAIN_RELAX_US       ((LCD_2IN1_ComposeBudgetUs() * 55u) / 100u)
 
 /* Blended pixels per refresh, across all drops, that comfortably fit the
  * deadline. Used feed forward: cost is about 2 pi r per unit of ring width, so

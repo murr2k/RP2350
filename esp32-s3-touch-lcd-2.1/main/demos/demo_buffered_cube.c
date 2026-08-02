@@ -27,9 +27,14 @@ static void run(void)
         demo_delay_ms(600);
     }
 
+    /* The original stepped a fixed amount per frame at about 20 fps. Once the
+     * sleeps went and frames arrived three times faster, so did the cube, fast
+     * enough to smear on the panel. Rates are per second now, chosen to match
+     * how it turned on the RP2350. */
     float angle_x = 0.0f;
     float angle_y = 0.0f;
     float angle_z = 0.0f;
+    uint64_t last_us = demo_micros();
     uint32_t frame = 0;
 
     while (!demo_exit_requested()) {
@@ -63,9 +68,10 @@ static void run(void)
 
         demo_frame_end();
 
-        angle_x += 0.03f;
-        angle_y += 0.05f;
-        angle_z += 0.01f;
+        const float dt = demo_delta_seconds(&last_us);
+        angle_x += 0.60f * dt;      /* was 0.03 per frame at 20 fps */
+        angle_y += 1.00f * dt;      /* was 0.05 */
+        angle_z += 0.20f * dt;      /* was 0.01 */
         if (angle_x > TWO_PI) {
             angle_x -= TWO_PI;
         }

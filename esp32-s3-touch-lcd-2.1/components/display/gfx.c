@@ -643,24 +643,42 @@ static void raster_text(const display_list_t *list, const prim_t *p, int y)
         return;
     }
 
+    /* Emitting one span per glyph column meant a scale 3 string cost hundreds
+     * of three pixel calls, which made text the most expensive thing on most
+     * screens. Runs of lit columns are merged into a single span, and glyphs
+     * off either edge are rejected before any of that. */
+    const int advance = 6 * scale;
+
     for (int i = 0; i < p->text_len; i++) {
+        const int gx = p->a + i * advance;
+        if (gx >= W) {
+            break;                      /* the rest of the string is off the right */
+        }
+        if (gx + advance <= 0) {
+            continue;                   /* still off the left */
+        }
+
         unsigned char ch = (unsigned char)list->text[p->text_off + i];
         if (ch < 0x20 || ch > 0x7F) {
             ch = '?';
         }
         const uint8_t *glyph = gfx_font5x7[ch - 0x20];
-        const int gx = p->a + i * 6 * scale;
 
-        for (int col = 0; col < 5; col++) {
-            const int x = gx + col * scale;
-            if ((glyph[col] >> glyph_row) & 0x01u) {
-                span(x, x + scale - 1, p->color);
-            } else if (p->bg != GFX_TRANSPARENT) {
-                span(x, x + scale - 1, p->bg);
-            }
-        }
         if (p->bg != GFX_TRANSPARENT) {
-            span(gx + 5 * scale, gx + 6 * scale - 1, p->bg);
+            span(gx, gx + advance - 1, p->bg);
+        }
+
+        int run = -1;
+        for (int col = 0; col <= 5; col++) {
+            const bool on = (col < 5) && (((glyph[col] >> glyph_row) & 0x01u) != 0u);
+            if (on) {
+                if (run < 0) {
+                    run = col;
+                }
+            } else if (run >= 0) {
+                span(gx + run * scale, gx + col * scale - 1, p->color);
+                run = -1;
+            }
         }
     }
 }
