@@ -82,6 +82,7 @@ bool cst820_read(touch_state_t *out)
     }
 
     state.gesture = (touch_gesture_t)buf[0];
+    state.contacts = buf[1];
     state.pressed = (buf[1] != 0);
     if (state.pressed) {
         state.x = (uint16_t)(((buf[2] & 0x0F) << 8) | buf[3]);
@@ -98,6 +99,14 @@ bool cst820_read(touch_state_t *out)
         *out = state;
     }
     return state.pressed;
+}
+
+bool cst820_read_raw(uint8_t *out, int len)
+{
+    if (!s_present || out == NULL || len <= 0) {
+        return false;
+    }
+    return DEV_I2C_Read_nByte(BOARD_TOUCH_ADDR, 0x00, out, (uint32_t)len) == ESP_OK;
 }
 
 const char *cst820_gesture_name(touch_gesture_t gesture)

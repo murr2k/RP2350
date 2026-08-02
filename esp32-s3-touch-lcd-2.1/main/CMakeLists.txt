@@ -3,6 +3,7 @@ idf_component_register(
         "main.c"
         "demo_common.c"
         "demos/demo_buffered_cube.c"
+        "demos/demo_finger_cube.c"
         "demos/demo_intuitive_cube.c"
         "demos/demo_gravity_locked_cube.c"
         "demos/demo_madgwick_cube.c"

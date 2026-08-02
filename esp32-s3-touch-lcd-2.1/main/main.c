@@ -34,6 +34,7 @@ static const char *TAG = "main";
 static const demo_t *const s_demos[] = {
     &demo_display_test,
     &demo_buffered_cube,
+    &demo_finger_cube,
     &demo_intuitive_cube,
     &demo_gravity_locked_cube,
     &demo_madgwick_cube,

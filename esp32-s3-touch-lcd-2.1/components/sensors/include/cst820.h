@@ -27,6 +27,7 @@ typedef struct {
     bool pressed;
     uint16_t x;
     uint16_t y;
+    uint8_t contacts;       /**< what the controller claims is touching it */
     touch_gesture_t gesture;
 } touch_state_t;
 
@@ -40,5 +41,10 @@ bool cst820_present(void);
 bool cst820_read(touch_state_t *out);
 
 const char *cst820_gesture_name(touch_gesture_t gesture);
+
+/** Raw register block starting at 0x00, for questions the decoded state cannot
+ *  answer: whether a second contact shows up anywhere in the map, what the
+ *  controller does with two fingers down, and so on. */
+bool cst820_read_raw(uint8_t *out, int len);
 
 #endif /* CST820_H */

@@ -7,6 +7,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "demo_common.h"
 
@@ -21,6 +22,14 @@ static const uint16_t s_palette[SWATCH_COUNT] = {
 /* Each trail point becomes a primitive in the display list, so this is also the
  * demo that decides how long that list has to be. */
 #define TRAIL_MAX 256
+
+/* Points closer together than this are not worth keeping. A finger held still,
+ * or one the panel is guessing about, otherwise stacks the whole trail into a
+ * few rows, and every one of those segments has to be rasterised again for each
+ * of those rows. That is what it takes to miss the composition deadline, and
+ * missing it used to freeze the panel outright. Spacing them out bounds the
+ * worst case and draws a better line as well. */
+#define TRAIL_MIN_STEP 5
 
 typedef struct {
     int16_t x, y;
@@ -66,6 +75,13 @@ static void run(void)
     touch_gesture_t last_gesture = TOUCH_GESTURE_NONE;
     uint32_t samples = 0;
 
+    /* Highest contact count the controller has ever admitted to. Put two
+     * fingers down and it still says one: this panel senses rows and columns
+     * separately, so two contacts and their two mirror positions produce
+     * identical readings and cannot be told apart. There is no second point
+     * anywhere in the register map either. Measured, not assumed. */
+    uint8_t max_contacts = 0;
+
     while (!demo_exit_requested()) {
         touch_state_t touch;
         const bool pressed = demo_touch(&touch);
@@ -74,6 +90,9 @@ static void run(void)
             samples++;
             if (touch.gesture != TOUCH_GESTURE_NONE) {
                 last_gesture = touch.gesture;
+            }
+            if (touch.contacts > max_contacts) {
+                max_contacts = touch.contacts;
             }
 
             if (touch.y > SWATCH_Y && touch.y < SWATCH_Y + SWATCH_SIZE) {
@@ -86,12 +105,21 @@ static void run(void)
             } else if (touch.y > SWATCH_Y + SWATCH_SIZE + 6 && !was_pressed) {
                 s_trail_count = 0;      /* CLEAR strip */
             } else if (s_trail_count < TRAIL_MAX) {
-                s_trail[s_trail_count++] = (trail_point_t){
-                    .x = (int16_t)touch.x,
-                    .y = (int16_t)touch.y,
-                    .color = s_palette[color_index],
-                    .start = !was_pressed,
-                };
+                const bool starting = !was_pressed;
+                bool far_enough = true;
+                if (!starting && s_trail_count > 0) {
+                    const int dx = (int)touch.x - s_trail[s_trail_count - 1].x;
+                    const int dy = (int)touch.y - s_trail[s_trail_count - 1].y;
+                    far_enough = (abs(dx) + abs(dy)) >= TRAIL_MIN_STEP;
+                }
+                if (far_enough) {
+                    s_trail[s_trail_count++] = (trail_point_t){
+                        .x = (int16_t)touch.x,
+                        .y = (int16_t)touch.y,
+                        .color = s_palette[color_index],
+                        .start = starting,
+                    };
+                }
             }
 
             printf("\rtouch x=%3u y=%3u gesture=%-13s points=%lu   ",
@@ -116,6 +144,11 @@ static void run(void)
         }
         snprintf(line, sizeof(line), "gesture %s", cst820_gesture_name(last_gesture));
         gfx_text_centered(DISP_CX, DEMO_ROW_TOP(1), line, GFX_GREY, 2);
+
+        snprintf(line, sizeof(line), "contacts %u   most seen %u",
+                 (unsigned)touch.contacts, (unsigned)max_contacts);
+        gfx_text_centered(DISP_CX, DEMO_ROW_TOP(2), line,
+                          (max_contacts > 1) ? GFX_GREEN : GFX_GREY, 2);
 
         for (int i = 0; i < SWATCH_COUNT; i++) {
             const int x = swatch_x(i);

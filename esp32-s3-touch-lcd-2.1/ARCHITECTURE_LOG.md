@@ -196,6 +196,48 @@ answering it properly required the experiment that made the bus visible. After
 that the remaining decisions were straightforward, including the ones that were
 decisions not to build something.
 
+## The deadline had no floor under it
+
+Taking the frame buffer away left composition inside the interrupt that refills
+the panel's bounce buffer, on a deadline set by the pixel clock. What none of
+that made explicit is what happens on the far side of the deadline, and the
+answer turned out to be: everything stops, permanently.
+
+Miss the refill and the next one is missed too. The driver's idea of how far
+through the frame it is drifts from the hardware's, and its VSYNC handler
+responds by resetting that position instead of letting it wrap
+(`esp_lcd_panel_rgb.c`, in `lcd_rgb_panel_try_restart_transmission`). The wrap
+is what raises the frame boundary event. The frame boundary event is the only
+thing that adopts a newly recorded display list.
+
+So the list that overran stays active, is composed again, and overruns again.
+The picture freezes mid frame while the panel keeps perfect timing over it, and
+every attempt to present waits out the 100 ms backstop. Nothing recovers it
+short of a reset. `CONFIG_LCD_RGB_RESTART_IN_VSYNC` was already enabled and does
+not help: it is the mechanism that resets the position, not a way out.
+
+It took a scribble to find. `touch_test` records up to 256 trail segments, and a
+finger held still stacks them into a few rows, where every one has to be
+rasterised again for each of those rows. Composition went 194, 884, 1715, 2206
+microseconds against a 498 microsecond deadline as the trail filled, and at 2206
+the panel was gone.
+
+Two changes, and the reasoning for having both:
+
+* **The composer now has a hard deadline** and abandons the rest of the buffer
+  rather than miss it, leaving those rows as background. It estimates the next
+  row from the last, so the overshoot is a row rather than a buffer. Reproducing
+  the failure with a synthetic worst case: 3497 us and 94 stalls before, 597 us
+  and none after, at full frame rate, paying 13 rows a frame in black bands.
+* **Presenting no longer depends solely on that event.** If the boundary does
+  not arrive, the render side adopts the list itself. One torn frame beats a
+  panel that never updates again.
+
+The first stops it happening. The second means that if it happens anyway,
+through some path not thought of here, the next frame still gets its chance.
+A picture too expensive to draw should cost the bottom of a buffer, not the
+display.
+
 ## What never changed
 
 The twelve demos. The `gfx_*` drawing API. The serial command grammars, the

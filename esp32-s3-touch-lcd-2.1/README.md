@@ -37,16 +37,18 @@ pressing its key on the serial console.
 |-----|------|--------------|
 | 1 | `display_test` | Colour fields, gradient, geometry, text, backlight sweep |
 | 2 | `buffered_cube` | Spinning wireframe cube, no sensors involved |
-| 3 | `intuitive_cube` | Cube follows the board's tilt, accelerometer only |
-| 4 | `gravity_locked_cube` | Cube stays level while the board turns |
-| 5 | `madgwick_cube` | 6-DOF Madgwick orientation with a body axis triad |
-| 6 | `configurable_cube` | Interactive cube, full axis and filter CLI |
-| 7 | `rotation_test` | Per-axis gyro dials, the axis calibration tool |
-| 8 | `axis_test` | Live accelerometer and gyro vectors with raw counts |
-| 9 | `kalman_6dof` | Quaternion Kalman filter with the CSV debug stream |
-| a | `kalman_6dof_config` | Kalman filter with axis CLI and data injection |
-| b | `touch_test` | Draw on the panel, watch coordinates and gestures |
-| c | `diagnostic` | I2C scan and hardware report |
+| 3 | `finger_cube` | Spin a cube with your finger, flick it to throw it |
+| 4 | `intuitive_cube` | Cube follows the board's tilt, accelerometer only |
+| 5 | `gravity_locked_cube` | Cube stays level while the board turns |
+| 6 | `madgwick_cube` | 6-DOF Madgwick orientation with a body axis triad |
+| 7 | `configurable_cube` | Interactive cube, full axis and filter CLI |
+| 8 | `rotation_test` | Per-axis gyro dials, the axis calibration tool |
+| 9 | `axis_test` | Live accelerometer and gyro vectors with raw counts |
+| a | `kalman_6dof` | Quaternion Kalman filter with the CSV debug stream |
+| b | `kalman_6dof_config` | Kalman filter with axis CLI and data injection |
+| c | `touch_test` | Draw on the panel, watch coordinates and gestures |
+| d | `diagnostic` | I2C scan and hardware report |
+| e | `rain` | Neopixel rain screensaver, also runs itself when idle |
 
 To leave a demo and come back to the menu: **hold a finger near the top of the
 screen** for about half a second, or press **ESC** (or `~`) on the console.

@@ -9,4 +9,5 @@ idf_component_register(
         board
         driver
         esp_lcd
+        esp_timer
 )

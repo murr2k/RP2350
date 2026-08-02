@@ -84,8 +84,30 @@ void gfx_swap_lists(void);
 
 /** Compose rows [first_row, first_row + row_count) of the active list into
  *  dest, which holds row_count consecutive rows of full width pixels. Called
- *  from the panel's interrupt. */
-void gfx_compose_rows(uint16_t *dest, int first_row, int row_count);
+ *  from the panel's interrupt.
+ *
+ *  budget_us is a hard deadline, not a target. Composition abandons the rest of
+ *  the buffer rather than miss it, leaving those rows as background. Missing it
+ *  is not a dropped frame, it is the end of the picture: see the comment on
+ *  gfx_take_trimmed_rows(). */
+void gfx_compose_rows(uint16_t *dest, int first_row, int row_count, uint32_t budget_us);
+
+/** Rows abandoned since the last call because drawing them would have missed
+ *  the deadline. Zero means every frame came out whole.
+ *
+ *  This exists because overrunning is not survivable. Composition happens in the
+ *  interrupt that refills the panel's bounce buffer, and that interrupt has to
+ *  return before the DMA drains the other buffer. Overrun it and the next one is
+ *  missed, the driver's idea of how far through the frame it is drifts from the
+ *  hardware's, and its VSYNC handler responds by resetting that position rather
+ *  than letting it wrap. The wrap is what raises the frame boundary event, and
+ *  the frame boundary event is the only thing that adopts a newly recorded list.
+ *
+ *  So a single frame expensive enough to overrun becomes the last frame: it is
+ *  still the active list, so it is composed again, so it overruns again. The
+ *  panel keeps its timing and the picture stays on screen, frozen, while every
+ *  attempt to present waits out the backstop. Trimming keeps that door shut. */
+uint32_t gfx_take_trimmed_rows(void);
 
 /** Half width of the visible circle on row y. The panel is round, so anything
  *  drawn further than this from the centre column is invisible. */

@@ -198,6 +198,7 @@ void demo_show_message(const char *title, const char *detail, uint16_t color);
 /* The demos, in menu order. */
 extern const demo_t demo_display_test;
 extern const demo_t demo_buffered_cube;
+extern const demo_t demo_finger_cube;
 extern const demo_t demo_intuitive_cube;
 extern const demo_t demo_gravity_locked_cube;
 extern const demo_t demo_madgwick_cube;

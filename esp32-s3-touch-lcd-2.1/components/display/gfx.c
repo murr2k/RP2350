@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "esp_timer.h"
 #include "lcd_2in1.h"
 
 #define W LCD_2IN1_WIDTH
@@ -64,6 +65,10 @@ static uint16_t *s_target;
 /* Half width of the visible circle on each row, for callers placing content. */
 static int16_t s_span[H];
 static bool s_span_ready;
+
+/* Rows given up on to make the deadline. Written in the interrupt, read by
+ * whoever is watching the frame budget. */
+static volatile uint32_t s_trimmed_rows;
 
 static void build_span_table(void)
 {
@@ -683,11 +688,27 @@ static void raster_text(const display_list_t *list, const prim_t *p, int y)
     }
 }
 
-void gfx_compose_rows(uint16_t *dest, int first_row, int row_count)
+uint32_t gfx_take_trimmed_rows(void)
+{
+    const uint32_t n = s_trimmed_rows;
+    s_trimmed_rows = 0;
+    return n;
+}
+
+void gfx_compose_rows(uint16_t *dest, int first_row, int row_count, uint32_t budget_us)
 {
     const display_list_t *list = s_active;
     const uint16_t bg = list->bg;
     const bool bytewise = ((bg >> 8) == (bg & 0xFF));
+
+    /* Rows within a buffer cost about the same, so the previous one is a good
+     * estimate of the next. Stopping when the estimate says the next row would
+     * cross the line keeps the overshoot to a row rather than a buffer, without
+     * a clock read per primitive. */
+    const int64_t started = esp_timer_get_time();
+    int64_t row_end = started;
+    int64_t worst_row = 0;
+    bool trimming = false;
 
     for (int r = 0; r < row_count; r++) {
         const int y = first_row + r;
@@ -704,6 +725,18 @@ void gfx_compose_rows(uint16_t *dest, int first_row, int row_count)
             for (int x = 0; x < W; x++) {
                 s_target[x] = bg;
             }
+        }
+
+        /* The first row always draws, whatever it costs: something has to come
+         * out, and a picture that is only ever background is no better than a
+         * frozen one. */
+        if (!trimming && r > 0 &&
+            (row_end - started) + worst_row > (int64_t)budget_us) {
+            trimming = true;
+        }
+        if (trimming) {
+            s_trimmed_rows++;
+            continue;
         }
 
         for (int i = 0; i < list->count; i++) {
@@ -735,5 +768,11 @@ void gfx_compose_rows(uint16_t *dest, int first_row, int row_count)
                 break;
             }
         }
+
+        const int64_t now = esp_timer_get_time();
+        if (now - row_end > worst_row) {
+            worst_row = now - row_end;
+        }
+        row_end = now;
     }
 }

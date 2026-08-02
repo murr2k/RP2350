@@ -568,12 +568,19 @@ void demo_frame_end(void)
     s_t_present += demo_micros() - t_recorded;
 
     if (++s_stat_frames >= 100) {
-        printf("\n[frame us] record %llu  wait %llu  total %llu  compose/bounce max %lu us%s\n",
+        const uint32_t trimmed = gfx_take_trimmed_rows();
+        const uint32_t stalls = LCD_2IN1_Stalls();
+        char warn[64] = "";
+        if (trimmed != 0 || stalls != 0) {
+            snprintf(warn, sizeof(warn), "  TRIMMED %lu rows, %lu stalls",
+                     (unsigned long)trimmed, (unsigned long)stalls);
+        }
+        printf("\n[frame us] record %llu  wait %llu  total %llu  compose/bounce max %lu us%s%s\n",
                (unsigned long long)(s_t_record / s_stat_frames),
                (unsigned long long)(s_t_present / s_stat_frames),
                (unsigned long long)((s_t_record + s_t_present) / s_stat_frames),
                (unsigned long)LCD_2IN1_ComposeMaxUs(),
-               overflowed ? "  DISPLAY LIST OVERFLOW" : "");
+               overflowed ? "  DISPLAY LIST OVERFLOW" : "", warn);
         s_t_record = s_t_present = 0;
         s_stat_frames = 0;
     }

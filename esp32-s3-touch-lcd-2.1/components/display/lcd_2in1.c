@@ -39,6 +39,12 @@ static SemaphoreHandle_t s_frame_done;
 /* Composition timing, so the deadline margin is measurable rather than assumed. */
 static volatile uint32_t s_compose_max_us;
 static volatile uint32_t s_compose_last_us;
+static uint32_t s_stalls;
+
+uint32_t LCD_2IN1_Stalls(void)
+{
+    return s_stalls;
+}
 
 uint32_t LCD_2IN1_ComposeMaxUs(void)
 {
@@ -70,7 +76,12 @@ static bool on_bounce_empty(esp_lcd_panel_handle_t panel, void *bounce_buf,
 
     const int first_row = pos_px / LCD_2IN1_WIDTH;
     const int rows = len_bytes / (LCD_2IN1_WIDTH * (int)sizeof(uint16_t));
-    gfx_compose_rows((uint16_t *)bounce_buf, first_row, rows);
+
+    /* Nine tenths of the drain time. The tenth left over covers getting into
+     * and out of the interrupt, and the row that is already being drawn when
+     * the composer decides to stop. */
+    gfx_compose_rows((uint16_t *)bounce_buf, first_row, rows,
+                     (BOUNCE_BUDGET_US * 9u) / 10u);
 
     const uint32_t elapsed = (uint32_t)(esp_timer_get_time() - started);
     s_compose_last_us = elapsed;
@@ -406,8 +417,20 @@ void LCD_2IN1_Present(void)
      * wedge a demo. */
     gfx_commit();
 
-    if (s_frame_done != NULL) {
-        xSemaphoreTake(s_frame_done, pdMS_TO_TICKS(100));
+    if (s_frame_done != NULL &&
+        xSemaphoreTake(s_frame_done, pdMS_TO_TICKS(100)) != pdTRUE) {
+        /* The frame boundary never came. Composition is meant to trim itself
+         * before that can happen, so getting here means something outran even
+         * that. Adopt the list from this side rather than wait for an event
+         * that may never arrive: the list being composed is the one that caused
+         * this, and leaving it in place is how a slow frame used to become a
+         * permanently frozen panel. Worst case is one torn frame. */
+        gfx_swap_lists();
+        s_stalls++;
+        if (s_stalls == 1 || (s_stalls % 40) == 0) {
+            ESP_LOGW(TAG, "frame boundary missed (%lu), forcing the list over",
+                     (unsigned long)s_stalls);
+        }
     }
     gfx_begin_frame();
 }

@@ -54,12 +54,17 @@ void LCD_2IN1_Display(uint16_t *Image);
 /** Longest and most recent time spent composing one bounce buffer, in
  *  microseconds. Reading the maximum resets it.
  *
- *  Going over the budget does not degrade gracefully: the composer falls behind
- *  the DMA and the frame boundary event stops arriving, which shows up as every
- *  frame waiting out the 100 ms backstop. Anything expensive should watch this
- *  and trim itself. */
+ *  Going over the budget is caught by the composer, which abandons the rest of
+ *  the buffer to make the deadline: see gfx_take_trimmed_rows() for why missing
+ *  it is not survivable. That is a backstop, not a licence. Anything expensive
+ *  should watch this figure and trim itself while it can still choose what to
+ *  drop, rather than have whole rows taken off the bottom of every buffer. */
 uint32_t LCD_2IN1_ComposeMaxUs(void);
 uint32_t LCD_2IN1_ComposeLastUs(void);
+
+/** Times the frame boundary failed to arrive within the backstop. Should stay
+ *  at zero; anything else means composition is losing to the panel. */
+uint32_t LCD_2IN1_Stalls(void);
 
 /** How long composing one bounce buffer may take, in microseconds. Derived from
  *  the pixel clock: the time the other bounce buffer takes to drain. */
