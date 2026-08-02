@@ -195,13 +195,37 @@ Everything else is a faithful port. These are the exceptions, all of them fixes:
 The RP2350 ran everything in one loop. Here the work is split across the two
 cores:
 
-* **Core 0** draws. The main task renders and calls `LCD_2IN1_Display()`, which
-  blocks until the panel has released the outgoing buffer. The LCD ISR also
-  lands here, and it is not cheap: bounce mode copies the whole 450 KB frame
-  from PSRAM every refresh, about 26 MB/s of memcpy in interrupt context.
+* **Core 0** draws, and does nothing else. The main task renders and calls
+  `LCD_2IN1_Display()`, which blocks until the panel has released the outgoing
+  buffer.
 * **Core 1** reads the IMU at its 250 Hz output rate, applies the board axis
   map, publishes the sample, and runs whichever filter the current demo
-  installed with `demo_set_filter()`.
+  installed with `demo_set_filter()`. It also carries the LCD interrupt: the
+  RGB panel's ISR is allocated on whichever core creates the panel, so
+  `main.c` creates it from a task pinned here, and the bounce buffer copy stays
+  off the drawing core.
+
+### What the frame budget is actually limited by
+
+Worth knowing before optimising anything else here. Per frame, measured:
+
+| | ISR on core 0 | ISR on core 1 |
+|---|---|---|
+| clear | 12.2 ms | 10.9 ms |
+| draw | 3.0 to 4.1 ms | 2.8 to 3.7 ms |
+| present, idle | 0.9 to 1.7 ms | 2.0 to 3.3 ms |
+
+Moving the interrupt off the drawing core bought about 1.3 ms, roughly 8% of
+the frame, not the half a core its 26 MB/s of memcpy might suggest. The work is
+memory bandwidth, not CPU cycles, which is the same thing the cache line
+experiment showed: one store per 64 byte line costs as much as sixteen.
+
+That also settles the obvious next idea. Handing the bounce fill to a GDMA
+channel would consume the same PSRAM bandwidth and save only that 1.3 ms of CPU,
+which moving cores already recovered. It would cost `no_fb` mode (the
+`on_bounce_empty` hook is only consulted when the driver owns no frame buffer),
+a hand written buffer swap, and a hard deadline in place of a synchronous copy.
+Not worth it.
 
 So filters integrate at 250 Hz while the display runs at 58.5 Hz, instead of
 both being pinned to the frame rate. State shared between the two is guarded by

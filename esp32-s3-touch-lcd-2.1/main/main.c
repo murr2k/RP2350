@@ -18,6 +18,8 @@
 #include "dev_config.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "sdkconfig.h"
 
 #if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
@@ -81,6 +83,33 @@ static void console_init(void)
     }
 #endif
     setvbuf(stdout, NULL, _IONBF, 0);
+}
+
+/* The RGB panel's interrupt is allocated on whichever core creates the panel,
+ * and in bounce mode that ISR copies the whole 450 KB frame out of PSRAM every
+ * refresh. Creating the panel from core 1 keeps that work off the core doing
+ * the drawing. */
+
+static esp_err_t s_lcd_init_result = ESP_FAIL;
+static volatile bool s_lcd_init_done;
+
+static void lcd_init_task(void *arg)
+{
+    (void)arg;
+    s_lcd_init_result = LCD_2IN1_Init(HORIZONTAL);
+    s_lcd_init_done = true;
+    vTaskDelete(NULL);
+}
+
+static esp_err_t lcd_init_on_sensor_core(void)
+{
+    if (xTaskCreatePinnedToCore(lcd_init_task, "lcd_init", 4096, NULL, 5, NULL, 1) != pdPASS) {
+        return LCD_2IN1_Init(HORIZONTAL);    /* fall back to this core */
+    }
+    while (!s_lcd_init_done) {
+        demo_delay_ms(10);
+    }
+    return s_lcd_init_result;
 }
 
 static void print_menu(void)
@@ -206,7 +235,7 @@ void app_main(void)
         }
     }
 
-    if (LCD_2IN1_Init(HORIZONTAL) != ESP_OK) {
+    if (lcd_init_on_sensor_core() != ESP_OK) {
         ESP_LOGE(TAG, "display init failed");
         for (;;) {
             demo_delay_ms(1000);
