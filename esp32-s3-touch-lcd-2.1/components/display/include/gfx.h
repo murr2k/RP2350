@@ -102,6 +102,14 @@ void gfx_fill_rect(int x, int y, int w, int h, uint16_t color);
 void gfx_circle(int cx, int cy, int r, uint16_t color);
 void gfx_fill_circle(int cx, int cy, int r, uint16_t color);
 
+/** Filled annulus between two radii. A stack of these with graded colours is
+ *  how a soft glowing ring is built without per pixel maths. */
+void gfx_ring(int cx, int cy, int r_inner, int r_outer, uint16_t color);
+
+/** As gfx_ring(), but the colour adds into what is already there and saturates,
+ *  so overlapping rings brighten rather than the last one winning. */
+void gfx_ring_add(int cx, int cy, int r_inner, int r_outer, uint16_t color);
+
 /** Arrow head at (x1,y1) pointing away from (x0,y0). */
 void gfx_arrow(int x0, int y0, int x1, int y1, uint16_t color);
 

@@ -21,12 +21,14 @@ typedef enum {
     P_LINE,
     P_CIRCLE,
     P_DISC,
+    P_RING,
     P_TEXT,
     P_ROW_FN,
 } prim_kind_t;
 
 typedef struct {
     uint8_t kind;
+    uint8_t additive;       /* add into the row instead of overwriting */
     uint8_t scale;          /* text scale, or line thickness */
     uint16_t color;
     uint16_t bg;            /* text background, GFX_TRANSPARENT for none */
@@ -264,6 +266,38 @@ void gfx_fill_circle(int cx, int cy, int r, uint16_t color)
         p->b = (int16_t)cy;
         p->c = (int16_t)r;
     }
+}
+
+static void ring(int cx, int cy, int r_inner, int r_outer, uint16_t color, bool additive)
+{
+    if (r_outer <= 0) {
+        return;
+    }
+    if (r_inner < 0) {
+        r_inner = 0;
+    }
+    if (r_inner > r_outer) {
+        return;
+    }
+
+    prim_t *p = add_prim(P_RING, cy - r_outer, cy + r_outer, color);
+    if (p != NULL) {
+        p->a = (int16_t)cx;
+        p->b = (int16_t)cy;
+        p->c = (int16_t)r_inner;
+        p->d = (int16_t)r_outer;
+        p->additive = additive ? 1u : 0u;
+    }
+}
+
+void gfx_ring(int cx, int cy, int r_inner, int r_outer, uint16_t color)
+{
+    ring(cx, cy, r_inner, r_outer, color, false);
+}
+
+void gfx_ring_add(int cx, int cy, int r_inner, int r_outer, uint16_t color)
+{
+    ring(cx, cy, r_inner, r_outer, color, true);
 }
 
 void gfx_arrow(int x0, int y0, int x1, int y1, uint16_t color)
@@ -521,6 +555,75 @@ static void raster_circle(const prim_t *p, int y)
     }
 }
 
+/* Saturating add in RGB565, so overlapping ripples brighten rather than the
+ * last one drawn winning. */
+static inline void span_add(int x0, int x1, uint16_t color)
+{
+    if (x0 < 0) {
+        x0 = 0;
+    }
+    if (x1 > W - 1) {
+        x1 = W - 1;
+    }
+
+    /* Red and blue are added together in one word and green in another, since
+     * neither group can carry into the other's bits. That is three adds and
+     * three rarely taken saturation fixups per pixel, instead of unpacking and
+     * repacking all three channels. This runs on every pixel of every ring on
+     * every row, so the difference is the demo keeping its deadline or not. */
+    const uint32_t crb = (uint32_t)color & 0xF81Fu;
+    const uint32_t cg = (uint32_t)color & 0x07E0u;
+    if ((crb | cg) == 0u) {
+        return;
+    }
+
+    for (int x = x0; x <= x1; x++) {
+        const uint32_t d = s_target[x];
+        uint32_t rb = (d & 0xF81Fu) + crb;
+        uint32_t g = (d & 0x07E0u) + cg;
+
+        if (rb & 0x00020u) {
+            rb |= 0x0001Fu;         /* blue overflowed its five bits */
+        }
+        if (rb & 0x10000u) {
+            rb |= 0x0F800u;         /* red overflowed */
+        }
+        if (g & 0x00800u) {
+            g |= 0x007E0u;          /* green overflowed its six */
+        }
+        s_target[x] = (uint16_t)((rb & 0xF81Fu) | (g & 0x07E0u));
+    }
+}
+
+static void raster_ring(const prim_t *p, int y)
+{
+    const int dy = y - p->b;
+    const int o2 = p->d * p->d - dy * dy;
+    if (o2 < 0) {
+        return;
+    }
+    const int xo = (int)isqrt32((uint32_t)o2);
+    const int i2 = p->c * p->c - dy * dy;
+
+    if (i2 <= 0) {
+        if (p->additive) {
+            span_add(p->a - xo, p->a + xo, p->color);
+        } else {
+            span(p->a - xo, p->a + xo, p->color);
+        }
+        return;
+    }
+
+    const int xi = (int)isqrt32((uint32_t)i2);
+    if (p->additive) {
+        span_add(p->a - xo, p->a - xi, p->color);
+        span_add(p->a + xi, p->a + xo, p->color);
+    } else {
+        span(p->a - xo, p->a - xi, p->color);
+        span(p->a + xi, p->a + xo, p->color);
+    }
+}
+
 static void raster_disc(const prim_t *p, int y)
 {
     const int dy = y - p->b;
@@ -602,6 +705,9 @@ void gfx_compose_rows(uint16_t *dest, int first_row, int row_count)
                 break;
             case P_DISC:
                 raster_disc(p, y);
+                break;
+            case P_RING:
+                raster_ring(p, y);
                 break;
             case P_TEXT:
                 raster_text(list, p, y);

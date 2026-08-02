@@ -14,6 +14,7 @@ idf_component_register(
         "demos/demo_display_test.c"
         "demos/demo_touch_test.c"
         "demos/demo_diagnostic.c"
+        "demos/demo_rain.c"
     INCLUDE_DIRS
         "."
     REQUIRES

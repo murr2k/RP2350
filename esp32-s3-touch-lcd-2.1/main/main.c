@@ -44,7 +44,12 @@ static const demo_t *const s_demos[] = {
     &demo_kalman_6dof_config,
     &demo_touch_test,
     &demo_diagnostic,
+    &demo_rain,
 };
+
+/* The picker hands over to the screensaver after this long with nothing
+ * touched or typed. Any contact brings it back. */
+#define SCREENSAVER_IDLE_US 30000000ULL
 
 #define DEMO_COUNT ((int)(sizeof(s_demos) / sizeof(s_demos[0])))
 
@@ -220,6 +225,7 @@ static int menu_select(void)
     int last_y = 0;
     uint64_t last_sample_us = 0;
     uint64_t last_frame_us = demo_micros();
+    uint64_t last_input_us = demo_micros();
     int announced = -1;
 
     print_menu();
@@ -227,6 +233,7 @@ static int menu_select(void)
     for (;;) {
         int c;
         while ((c = demo_read_char()) >= 0) {
+            last_input_us = demo_micros();
             if (c == '?') {
                 print_menu();
                 continue;
@@ -258,6 +265,21 @@ static int menu_select(void)
 
         touch_state_t touch;
         const bool pressed = demo_touch(&touch);
+        if (pressed) {
+            last_input_us = now;
+        }
+
+        if (now - last_input_us > SCREENSAVER_IDLE_US) {
+            demo_clear_exit();
+            demo_rain.run();
+            demo_clear_exit();
+            last_input_us = demo_micros();
+            last_frame_us = last_input_us;
+            announced = -1;
+            dragging = false;
+            velocity = 0.0f;
+            continue;
+        }
 
         if (pressed && !dragging) {
             dragging = true;

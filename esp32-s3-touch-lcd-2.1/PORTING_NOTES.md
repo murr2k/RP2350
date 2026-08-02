@@ -274,6 +274,39 @@ rasteriser lives in PSRAM and calls into the standard library; nothing here
 writes flash at runtime, which is the only thing that would pull the cache out
 from under it.
 
+### What composing on demand costs, and what it does not suit
+
+Dropping the frame buffer changed what a frame costs, in a way worth knowing
+before adding anything visually dense.
+
+With a frame buffer, a scene is drawn once per *update* and the DMA streams it
+however often the panel refreshes. Without one, the scene is recomposed on every
+*refresh*, 58.5 times a second, whether or not anything moved, and each bounce
+buffer has a hard 342 us to be ready. Cost is set by the panel, not by how often
+you choose to redraw.
+
+That is excellent for sparse content. A wireframe cube composes in about 200 us
+of the 342 available. It is poor for anything that covers the screen. The `rain`
+screensaver draws soft glowing rings whose blended area is roughly `2 pi r` per
+unit of ring width, and at the parameters scaled faithfully from the original it
+needed 499 us. Overrunning does not degrade gracefully: the composer falls behind
+the DMA, the bounce position stops wrapping, the frame boundary event never
+arrives, and every frame waits out the 100 ms backstop. 58 fps becomes 10.
+
+Three attempts to pick parameters that fit by hand all missed, in both
+directions, because the per pixel cost turned out to be about twice what the
+arithmetic suggested. What worked was letting the demo measure itself:
+
+* **Feed forward.** Blended area is about `2 pi r * width`, so cap the width to
+  hold that product roughly constant. A ripple thins as it spreads, which is
+  both cheaper and closer to how water behaves.
+* **Feedback.** Read `LCD_2IN1_ComposeMaxUs()` each frame and trim quality when
+  it approaches the deadline, recovering slowly while there is headroom.
+
+That combination holds 58.6 fps with roughly one brief overrun per 40 seconds,
+where fixed parameters either collapsed or looked thin. Anything dense added
+later should follow the same pattern rather than trusting a static guess.
+
 ### What the frame budget is actually limited by
 
 Worth knowing before optimising anything else here. Per frame, measured:

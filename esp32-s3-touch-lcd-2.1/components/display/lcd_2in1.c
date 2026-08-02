@@ -16,10 +16,15 @@
 #include "gfx.h"
 #include "tca9554.h"
 
-/* Rows composed per bounce buffer. The panel drains one buffer every
- * BOUNCE_LINES / 29192 lines per second, about 342 us, and there are two, so a
- * refill has roughly twice that to complete. */
+/* Rows composed per bounce buffer.
+ *
+ * The deadline is one buffer, not two. When the DMA finishes a buffer it starts
+ * on the other one immediately, so the refill has exactly as long as that other
+ * buffer takes to drain: BOUNCE_LINES lines at 34.3 us each, about 342 us for
+ * ten. Overrun it and the composer falls behind the DMA, the bounce position
+ * never wraps, and the frame boundary event stops arriving altogether. */
 #define BOUNCE_LINES 10
+#define BOUNCE_BUDGET_US 342
 
 static const char *TAG = "lcd";
 

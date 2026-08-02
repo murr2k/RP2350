@@ -208,5 +208,6 @@ extern const demo_t demo_kalman_6dof;
 extern const demo_t demo_kalman_6dof_config;
 extern const demo_t demo_touch_test;
 extern const demo_t demo_diagnostic;
+extern const demo_t demo_rain;
 
 #endif /* DEMO_COMMON_H */
