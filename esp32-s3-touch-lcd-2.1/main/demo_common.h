@@ -74,6 +74,21 @@ float invSqrt(float x);
 
 void quat_identity(quaternion_t *q);
 void quat_normalize(quaternion_t *q);
+
+/** out = a * b. Safe to alias with either input.
+ *
+ *  Order decides the frame. `delta * q` turns the result about an axis fixed in
+ *  the world, which is what a screen gesture or a gravity correction wants;
+ *  `q * delta` turns it about one fixed in the body, which is what gyro rates
+ *  give (and what quat_integrate() does). */
+void quat_mul(quaternion_t *out, const quaternion_t *a, const quaternion_t *b);
+
+/** Shortest rotation taking unit vector `from` onto unit vector `to`, scaled to
+ *  `fraction` of the way there. Never names an angle about a fixed axis, so
+ *  there is nothing to gimbal lock, and it stays defined when the two are
+ *  exactly opposed (any axis will do, so it picks one). */
+void quat_align(quaternion_t *out, const vertex_t *from, const vertex_t *to,
+                float fraction);
 void quat_integrate(quaternion_t *q, float gx, float gy, float gz, float dt);
 void quat_rotate_vertex(vertex_t *v, const quaternion_t *q);
 void quat_to_euler(const quaternion_t *q, float *roll, float *pitch, float *yaw);

@@ -51,17 +51,6 @@
 #define SPIN_FLOOR      0.05f       /* below this it may as well be stopped */
 #define AXIS_MIN        0.4f        /* rad/s before the axis line is drawn */
 
-static void quat_mul(quaternion_t *out, const quaternion_t *a, const quaternion_t *b)
-{
-    const float aw = a->w, ax = a->x, ay = a->y, az = a->z;
-    const float bw = b->w, bx = b->x, by = b->y, bz = b->z;
-
-    out->w = aw * bw - ax * bx - ay * by - az * bz;
-    out->x = aw * bx + ax * bw + ay * bz - az * by;
-    out->y = aw * by - ax * bz + ay * bw + az * bx;
-    out->z = aw * bz + ax * by - ay * bx + az * bw;
-}
-
 /** Turn the cube by a rotation vector expressed in screen axes: x right,
  *  y down, z away from the viewer. Left multiply, so the axis stays put while
  *  the cube moves under it. */

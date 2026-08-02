@@ -68,6 +68,65 @@ void quat_normalize(quaternion_t *q)
     }
 }
 
+void quat_mul(quaternion_t *out, const quaternion_t *a, const quaternion_t *b)
+{
+    const float aw = a->w, ax = a->x, ay = a->y, az = a->z;
+    const float bw = b->w, bx = b->x, by = b->y, bz = b->z;
+
+    out->w = aw * bw - ax * bx - ay * by - az * bz;
+    out->x = aw * bx + ax * bw + ay * bz - az * by;
+    out->y = aw * by - ax * bz + ay * bw + az * bx;
+    out->z = aw * bz + ax * by - ay * bx + az * bw;
+}
+
+void quat_align(quaternion_t *out, const vertex_t *from, const vertex_t *to,
+                float fraction)
+{
+    /* The cross product is the axis, its length the sine of the angle, and the
+     * dot product the cosine. atan2 of the two covers the whole half turn,
+     * which asin() cannot: it stops at a right angle and gives the same answer
+     * either side of it. */
+    float ax = from->y * to->z - from->z * to->y;
+    float ay = from->z * to->x - from->x * to->z;
+    float az = from->x * to->y - from->y * to->x;
+
+    const float sine = sqrtf(ax * ax + ay * ay + az * az);
+    const float cosine = from->x * to->x + from->y * to->y + from->z * to->z;
+    float angle = atan2f(sine, cosine);
+
+    if (sine > 1e-6f) {
+        ax /= sine;
+        ay /= sine;
+        az /= sine;
+    } else if (cosine < 0.0f) {
+        /* Exactly opposed. Every axis at right angles to them is equally short,
+         * so take one that is certain to be perpendicular: the smallest
+         * component of `from` cannot be the one along it. */
+        const float bx = fabsf(from->x), by = fabsf(from->y), bz = fabsf(from->z);
+        const vertex_t pick = (bx <= by && bx <= bz) ? (vertex_t){1.0f, 0.0f, 0.0f}
+                            : (by <= bz)             ? (vertex_t){0.0f, 1.0f, 0.0f}
+                                                     : (vertex_t){0.0f, 0.0f, 1.0f};
+        ax = from->y * pick.z - from->z * pick.y;
+        ay = from->z * pick.x - from->x * pick.z;
+        az = from->x * pick.y - from->y * pick.x;
+        const float n = sqrtf(ax * ax + ay * ay + az * az);
+        ax /= n;
+        ay /= n;
+        az /= n;
+        angle = PI;
+    } else {
+        quat_identity(out);
+        return;
+    }
+
+    const float half = 0.5f * angle * fraction;
+    const float s = sinf(half);
+    out->w = cosf(half);
+    out->x = ax * s;
+    out->y = ay * s;
+    out->z = az * s;
+}
+
 void quat_integrate(quaternion_t *q, float gx, float gy, float gz, float dt)
 {
     const float qw = q->w;

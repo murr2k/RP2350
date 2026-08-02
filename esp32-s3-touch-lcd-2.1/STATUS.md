@@ -33,13 +33,12 @@ constants are at the top of `main/main.c`:
 | `CAROUSEL_TAP_SLOP` | 12 | pixels of movement still counted as a tap |
 | `CAROUSEL_MAX_FLING` | 14.0 | items per second |
 
-**2. `intuitive_cube` has a convention of its own.** Settling the board frame
-raised a separate question one level up: that demo feeds `acc.y` to the
-horizontal screen axis and `acc.x` to the vertical one, which is not the same
-convention `board_config.h` now documents. The board frame is right either way,
-so this is a demo level question about how a tilt should read on screen, not a
-sensor one. Worth a look at demo `4` to see whether the cube leans the way the
-board leans before changing anything.
+**2. `intuitive_cube` cannot see heading, and it shows.** Turning the board flat
+on the table spins the cube about the screen normal. That is not a bug in the
+demo: gravity is unchanged by that motion, so an accelerometer alone has no way
+to know it happened, and the demo carries the unobservable degree of freedom
+over rather than inventing one. Fixing it means bringing the gyroscope in, which
+is what `madgwick_cube` and the Kalman demos already do. Deferred deliberately.
 
 **3. The instrumentation is still in the build**, by request. It prints a frame
 breakdown every 100 frames from `demo_frame_end()` and runs a PSRAM benchmark in
