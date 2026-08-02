@@ -33,6 +33,10 @@
 #define GFX_RGB(r, g, b) \
     ((uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | (((b) & 0xF8) >> 3)))
 
+/** Scale a colour's brightness by num/den, for fading things out with distance
+ *  on a screen that has no alpha channel. */
+uint16_t gfx_dim(uint16_t color, int num, int den);
+
 /** Pass as the background colour to leave the existing pixels alone. */
 #define GFX_TRANSPARENT 0x0001
 

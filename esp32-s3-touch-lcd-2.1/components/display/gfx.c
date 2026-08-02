@@ -89,6 +89,24 @@ int gfx_visible_half_width(int y)
     return s_span[y];
 }
 
+uint16_t gfx_dim(uint16_t color, int num, int den)
+{
+    if (den <= 0) {
+        return color;
+    }
+    if (num < 0) {
+        num = 0;
+    }
+    if (num > den) {
+        num = den;
+    }
+
+    const int r = ((color >> 11) & 0x1F) * num / den;
+    const int g = ((color >> 5) & 0x3F) * num / den;
+    const int b = (color & 0x1F) * num / den;
+    return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
 void gfx_bind(uint16_t *fb)
 {
     (void)fb;   /* there is no frame buffer any more */

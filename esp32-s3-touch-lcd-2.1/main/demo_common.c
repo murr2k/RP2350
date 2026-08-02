@@ -415,7 +415,9 @@ void demo_sensor_start(void)
 /* --- launcher services ---------------------------------------------------- */
 
 #define INPUT_RING 32
-#define TOUCH_POLL_INTERVAL_US 20000
+/* Faster than the frame period, so a dragging finger is sampled fresh every
+ * frame rather than every other one. */
+#define TOUCH_POLL_INTERVAL_US 10000
 #define EXIT_HOLD_US 600000
 #define EXIT_ZONE_HEIGHT (DISP_H / 6)
 

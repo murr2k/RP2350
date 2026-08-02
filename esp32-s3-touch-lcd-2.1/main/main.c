@@ -48,8 +48,20 @@ static const demo_t *const s_demos[] = {
 
 #define DEMO_COUNT ((int)(sizeof(s_demos) / sizeof(s_demos[0])))
 
-#define MENU_FIRST_ROW_Y 96
-#define MENU_ROW_PITCH   26
+/* The picker is a drum: one continuous scroll position, snapped to a detent on
+ * release, with whatever sits in the middle being the selection. That is the
+ * round screen convention, from Wear OS's ScalingLazyColumn and LVGL's roller:
+ * the centre is the only place with full width, so the centre is the cursor.
+ *
+ * Items shrink and dim with distance from the middle. Our font only comes in
+ * whole scales, so "shrink" is three tiers rather than a smooth curve, and they
+ * are also pushed outward along the bezel arc, which is what Wear OS's curving
+ * layout does. */
+#define CAROUSEL_PITCH      64      /* pixels between detents */
+#define CAROUSEL_FRICTION   6.0f    /* per second, momentum decay */
+#define CAROUSEL_SNAP       14.0f   /* per second, pull toward the nearest item */
+#define CAROUSEL_TAP_SLOP   12      /* pixels of movement still counted as a tap */
+#define CAROUSEL_MAX_FLING  14.0f   /* items per second */
 
 /* Keys 1..9 then a, b, c for the rest. */
 static char menu_key(int index)
@@ -119,29 +131,67 @@ static void print_menu(void)
     for (int i = 0; i < DEMO_COUNT; i++) {
         printf("  %c  %-22s %s\n", menu_key(i), s_demos[i]->name, s_demos[i]->summary);
     }
-    printf("\n  ESC or ~   leave a running demo\n");
+    printf("\n  drag       scroll the picker, tap the middle entry to start\n");
+    printf("  j / k      move the picker down / up\n");
+    printf("  Enter      start whatever is centred\n");
+    printf("  ESC or ~   leave a running demo\n");
     printf("  ?          reprint this menu\n\n");
 }
 
-static void draw_menu(int highlight)
+static float clampf(float v, float lo, float hi)
+{
+    return (v < lo) ? lo : ((v > hi) ? hi : v);
+}
+
+static void draw_carousel(float scroll)
 {
     demo_frame_begin(GFX_BLACK);
 
-    gfx_text_centered(DISP_CX, 46, "ESP32-S3 LCD DEMOS", GFX_CYAN, 2);
-    gfx_text_centered(DISP_CX, 70, "tap an entry, or press its key", GFX_DGREY, 1);
+    /* The detent, drawn faintly so the centre reads as the selection without
+     * needing a highlight bar. */
+    const uint16_t guide = GFX_RGB(0, 60, 80);
+    gfx_hline(DISP_CX - 140, DISP_CY - CAROUSEL_PITCH / 2, 280, guide);
+    gfx_hline(DISP_CX - 140, DISP_CY + CAROUSEL_PITCH / 2, 280, guide);
 
     for (int i = 0; i < DEMO_COUNT; i++) {
-        const int y = MENU_FIRST_ROW_Y + i * MENU_ROW_PITCH;
-        const bool on = (i == highlight);
-        const uint16_t color = on ? GFX_BLACK : GFX_WHITE;
-
-        if (on) {
-            gfx_fill_rect(DISP_CX - 150, y - 5, 300, MENU_ROW_PITCH - 2, GFX_CYAN);
+        const int dy = (int)(((float)i - scroll) * CAROUSEL_PITCH);
+        const int distance = abs(dy);
+        if (distance > 230) {
+            continue;               /* past the bezel */
         }
-        char line[40];
-        snprintf(line, sizeof(line), "%c %s", menu_key(i), s_demos[i]->name);
-        gfx_text(DISP_CX - 140, y, line, color, 2);
+
+        /* Three tiers, because the font only comes in whole scales. */
+        int scale;
+        int level;
+        if (distance < CAROUSEL_PITCH / 2) {
+            scale = 3;
+            level = 16;
+        } else if (distance < CAROUSEL_PITCH * 3 / 2) {
+            scale = 2;
+            level = 10;
+        } else {
+            scale = 1;
+            level = 6;
+        }
+
+        /* Fade into the bezel, so the ends of the list dissolve rather than
+         * being clipped by the glass. */
+        const int fade = 16 - (distance * 16) / 230;
+        if (fade < level) {
+            level = fade;
+        }
+        if (level <= 0) {
+            continue;
+        }
+
+        const uint16_t color = gfx_dim((distance < CAROUSEL_PITCH / 2) ? GFX_CYAN : GFX_WHITE,
+                                       level, 16);
+        gfx_text_centered(DISP_CX, DISP_CY + dy - gfx_text_height(scale) / 2,
+                          s_demos[i]->name, color, scale);
     }
+
+    const int centred = (int)clampf(scroll + 0.5f, 0.0f, (float)(DEMO_COUNT - 1));
+    gfx_text_centered(DISP_CX, DISP_CY + 74, s_demos[centred]->summary, GFX_DGREY, 1);
 
     char status[64];
     snprintf(status, sizeof(status), "IMU %s   TOUCH %s   BAT %.2fV",
@@ -149,6 +199,8 @@ static void draw_menu(int highlight)
              cst820_present() ? "ok" : "--",
              DEV_Battery_Volts());
     gfx_text_centered(DISP_CX, DISP_H - 62, status, GFX_GREY, 1);
+    gfx_text_centered(DISP_CX, DISP_H - 48, "drag to scroll, tap the middle to start",
+                      gfx_dim(GFX_GREY, 8, 16), 1);
 
     demo_frame_end();
 }
@@ -156,55 +208,137 @@ static void draw_menu(int highlight)
 /** Block until the user picks a demo, and return its index. */
 static int menu_select(void)
 {
-    int highlight = -1;
-    bool was_pressed = false;
-    int pressed_row = -1;
+    static float s_scroll;          /* survives between demos, so the picker
+                                     * comes back where it was left */
+    float velocity = 0.0f;
+    float seek_target = -1.0f;
 
-    draw_menu(highlight);
+    bool dragging = false;
+    int drag_start_y = 0;
+    float drag_start_scroll = 0.0f;
+    int drag_travel = 0;
+    int last_y = 0;
+    uint64_t last_sample_us = 0;
+    uint64_t last_frame_us = demo_micros();
+    int announced = -1;
+
     print_menu();
 
     for (;;) {
-        const int c = demo_read_char();
-        if (c >= 0) {
+        int c;
+        while ((c = demo_read_char()) >= 0) {
             if (c == '?') {
                 print_menu();
-            } else {
-                const int index = menu_index_for_key((char)c);
-                if (index >= 0) {
-                    return index;
-                }
+                continue;
             }
+            if (c == '\r' || c == '\n') {
+                return (int)clampf(s_scroll + 0.5f, 0.0f, (float)(DEMO_COUNT - 1));
+            }
+            if (c == 'j' || c == 'k') {
+                /* Keyboard drives the same animation the finger does. */
+                const float from = (seek_target >= 0.0f) ? seek_target : s_scroll;
+                seek_target = clampf((float)((int)(from + 0.5f) + ((c == 'j') ? 1 : -1)),
+                                     0.0f, (float)(DEMO_COUNT - 1));
+                velocity = 0.0f;
+                continue;
+            }
+            const int index = menu_index_for_key((char)c);
+            if (index >= 0) {
+                s_scroll = (float)index;
+                return index;
+            }
+        }
+
+        const uint64_t now = demo_micros();
+        float dt = (float)(now - last_frame_us) / 1000000.0f;
+        last_frame_us = now;
+        if (dt > 0.1f) {
+            dt = 0.1f;
         }
 
         touch_state_t touch;
         const bool pressed = demo_touch(&touch);
 
-        if (pressed) {
-            const int row = (touch.y - MENU_FIRST_ROW_Y + 5) / MENU_ROW_PITCH;
-            const int valid = (row >= 0 && row < DEMO_COUNT &&
-                               touch.y >= MENU_FIRST_ROW_Y - 5) ? row : -1;
-            if (valid != highlight) {
-                highlight = valid;
-                draw_menu(highlight);
+        if (pressed && !dragging) {
+            dragging = true;
+            drag_start_y = touch.y;
+            drag_start_scroll = s_scroll;
+            drag_travel = 0;
+            last_y = touch.y;
+            last_sample_us = now;
+            velocity = 0.0f;
+            seek_target = -1.0f;
+        } else if (pressed) {
+            /* The list follows the finger: dragging down brings earlier items
+             * into view, so scroll runs the other way. */
+            s_scroll = clampf(drag_start_scroll -
+                                  (float)(touch.y - drag_start_y) / CAROUSEL_PITCH,
+                              0.0f, (float)(DEMO_COUNT - 1));
+
+            const int moved = touch.y - last_y;
+            if (abs(touch.y - drag_start_y) > drag_travel) {
+                drag_travel = abs(touch.y - drag_start_y);
             }
-            pressed_row = valid;
-            was_pressed = true;
-        } else if (was_pressed) {
-            /* Launch on release, so a drag can be used to change your mind. */
-            was_pressed = false;
-            if (pressed_row >= 0) {
-                return pressed_row;
+            const float sample_dt = (float)(now - last_sample_us) / 1000000.0f;
+            if (moved != 0 && sample_dt > 0.0005f) {
+                velocity = -(float)moved / CAROUSEL_PITCH / sample_dt;
+                last_y = touch.y;
+                last_sample_us = now;
             }
-            highlight = -1;
-            draw_menu(highlight);
+        } else if (dragging) {
+            dragging = false;
+
+            if (drag_travel <= CAROUSEL_TAP_SLOP) {
+                /* A tap. On the centred item it starts; anywhere else it brings
+                 * that item to the middle, which is forgiving of near misses. */
+                velocity = 0.0f;
+                const int centred = (int)clampf(s_scroll + 0.5f, 0.0f,
+                                               (float)(DEMO_COUNT - 1));
+                const int tapped = (int)clampf(
+                    s_scroll + (float)(touch.y - DISP_CY) / CAROUSEL_PITCH + 0.5f,
+                    0.0f, (float)(DEMO_COUNT - 1));
+                if (tapped == centred) {
+                    s_scroll = (float)centred;
+                    return centred;
+                }
+                seek_target = (float)tapped;
+            } else {
+                velocity = clampf(velocity, -CAROUSEL_MAX_FLING, CAROUSEL_MAX_FLING);
+            }
         }
 
-        /* The exit gesture has no meaning here, and the flag is cleared before
-         * the next demo starts, so the menu simply ignores it. Calling
-         * demo_clear_exit() in this loop would also flush the key that was
-         * just typed. */
+        if (!dragging) {
+            if (velocity > 0.05f || velocity < -0.05f) {
+                s_scroll += velocity * dt;
+                velocity -= velocity * CAROUSEL_FRICTION * dt;
+                if (s_scroll < 0.0f || s_scroll > (float)(DEMO_COUNT - 1)) {
+                    s_scroll = clampf(s_scroll, 0.0f, (float)(DEMO_COUNT - 1));
+                    velocity = 0.0f;
+                }
+            } else {
+                velocity = 0.0f;
+                const float target = (seek_target >= 0.0f) ? seek_target
+                                                           : (float)(int)(s_scroll + 0.5f);
+                const float delta = target - s_scroll;
+                s_scroll += delta * clampf(CAROUSEL_SNAP * dt, 0.0f, 1.0f);
+                if (delta < 0.01f && delta > -0.01f) {
+                    s_scroll = target;
+                    seek_target = -1.0f;
+                }
+            }
+        }
 
-        demo_delay_ms(20);
+        const int centred = (int)clampf(s_scroll + 0.5f, 0.0f, (float)(DEMO_COUNT - 1));
+        if (centred != announced) {
+            announced = centred;
+            printf("> %c  %s\n", menu_key(centred), s_demos[centred]->name);
+        }
+
+        draw_carousel(s_scroll);
+
+        /* The exit gesture has no meaning here, and the flag is cleared before
+         * the next demo starts, so the picker ignores it. Calling
+         * demo_clear_exit() in this loop would also flush the key just typed. */
     }
 }
 
