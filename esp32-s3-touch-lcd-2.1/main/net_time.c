@@ -21,6 +21,18 @@
 #include "wifi_secrets.h"
 #endif
 
+/* The absence of credentials is a runtime state, not a compile time one: the
+ * code that would use them still has to compile so that a fresh clone builds.
+ * These stand in for that, and are never read, because net_time_start() sees
+ * the flag below and never starts the task that would. */
+#if defined(WIFI_SSID)
+#define HAVE_NETWORK 1
+#else
+#define HAVE_NETWORK 0
+#define WIFI_SSID ""
+#define WIFI_PASS ""
+#endif
+
 static const char *TAG = "net_time";
 
 /* US Pacific, matching the machine this was built on. Change this one line for
@@ -202,11 +214,12 @@ static void net_time_task(void *arg)
 
 void net_time_start(void)
 {
-#if !defined(WIFI_SSID)
-    ESP_LOGW(TAG, "no wifi_secrets.h, so no network and no time");
-    s_state = NET_TIME_NO_CONFIG;
-    return;
-#else
+    if (!HAVE_NETWORK) {
+        ESP_LOGW(TAG, "no wifi_secrets.h, so no network and no time");
+        s_state = NET_TIME_NO_CONFIG;
+        return;
+    }
+
     s_events = xEventGroupCreate();
     if (s_events == NULL) {
         s_state = NET_TIME_FAILED;
@@ -214,7 +227,6 @@ void net_time_start(void)
     }
     xTaskCreatePinnedToCore(net_time_task, "net_time", TASK_STACK, NULL,
                             TASK_PRIORITY, NULL, TASK_CORE);
-#endif
 }
 
 net_time_state_t net_time_state(void)
