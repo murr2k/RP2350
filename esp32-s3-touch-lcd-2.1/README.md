@@ -89,39 +89,110 @@ so the clock stays right across it without anyone touching anything.
 
 ## Build environment
 
-### Prerequisites
-
-- Ubuntu 22.04, WSL2 or macOS
-- **ESP-IDF v5.3 or newer** (v5.2 will not work: the port uses the current
-  `i2c_master` driver API)
-
-### Install ESP-IDF
+### Setting up a new machine
 
 ```bash
-./tools/install_esp_idf.sh
-# then, in every new shell:
-. ~/esp/esp-idf/export.sh
+git clone https://github.com/murr2k/RP2350.git
+cd RP2350/esp32-s3-touch-lcd-2.1
+cp main/wifi_secrets.h.example main/wifi_secrets.h   # then edit it
+./tools/doctor.sh                                    # says what is missing
+./tools/build.sh
+./tools/flash.sh COM3                                # or /dev/ttyACM0
 ```
 
-Or by hand:
+`tools/doctor.sh` checks every requirement below and prints what to do about
+each one. Start there rather than working through the list by hand.
 
-```bash
-mkdir -p ~/esp && cd ~/esp
-git clone -b v5.3.2 --recursive https://github.com/espressif/esp-idf.git
-cd esp-idf && ./install.sh esp32s3 && . ./export.sh
-```
+### What has to be on the host
+
+**Always**, because flashing and the serial console never run in a container:
+
+| | |
+|---|---|
+| Git | any recent version |
+| Python 3 | with `esptool` and `pyserial`: `pip install esptool pyserial` |
+| USB serial driver | CH343, for the socket marked UART. Windows 11 usually has it, otherwise [wch.cn](https://www.wch-ic.com/downloads/CH341SER_EXE.html); Linux and macOS need nothing |
+
+**Then a compiler, either way round.** The firmware on the bench was built with
+the first:
+
+| | |
+|---|---|
+| Docker | `docker pull espressif/idf:v5.3.2`. Nothing else installed, about 8 GB once |
+| or native ESP-IDF | `tools/install_esp_idf.sh` on Ubuntu or WSL2, or Espressif's own installer |
+
+`tools/build.sh` uses a native ESP-IDF if it finds one and the container
+otherwise, so the same command works on either. Force it with `BUILD_WITH=docker`
+or `BUILD_WITH=native`.
+
+**The version matters.** ESP-IDF must be **v5.3.x**. v5.2 will not compile this:
+the port uses the `i2c_master` driver API that replaced the old `i2c` one. The
+container tag pins it exactly, which is the main reason to prefer it.
+
+Versions this was developed and tested against:
+
+| | |
+|---|---|
+| Docker | 29.6.2 |
+| `espressif/idf` | v5.3.2 (its own bundled esptool is 4.8.1) |
+| Python | 3.14.3 |
+| esptool | 5.3.1 |
+| pyserial | 3.5 |
+| Git | 2.53.0 |
+
+CI builds the same v5.3.2 through `espressif/esp-idf-ci-action`, so a green
+build there means the tree compiles against a clean toolchain of that version.
+
+### Why the build can be containerised but the flash cannot
+
+Docker Desktop on Windows and macOS cannot pass a serial port through to a
+container, so a container has no way to reach the board. `tools/flash.sh`
+therefore always runs esptool on the host, whichever way the firmware was built.
+That is also why `idf.py flash` is not the documented route: it only works if
+ESP-IDF is installed natively.
 
 ### Build
 
 ```bash
-cd esp32-s3-touch-lcd-2.1
-idf.py set-target esp32s3
-idf.py build
+./tools/build.sh              # build
+./tools/build.sh clean        # discard build/ and sdkconfig, start again
+./tools/build.sh menuconfig   # or any other idf.py argument
 ```
 
-or `./tools/build.sh`, which sources the toolchain for you.
-
 Output: `build/esp32s3_lcd_demo.bin`.
+
+`sdkconfig` is generated and is not the file to edit. Settings live in
+`sdkconfig.defaults`; after changing it, run `./tools/build.sh clean`, because
+defaults are only applied when `sdkconfig` is regenerated.
+
+### Platform notes
+
+**Windows.** The scripts run under Git Bash, which ships with Git. Two traps
+they already handle: Git Bash rewrites `/project` into a Windows path before
+Docker sees it, and Windows ships a `python3` that exists only to advertise the
+Microsoft Store, resolving on `PATH` and then refusing to run. Docker Desktop
+also has to be sharing the drive the repository is on (Settings, Resources, File
+sharing) or the build will start and find an empty directory.
+
+**Linux.** Add yourself to the `dialout` group for serial access, then log out
+and back in:
+
+```bash
+sudo usermod -aG dialout $USER
+```
+
+**WSL2.** Attach the board to the Linux side first, from an admin PowerShell:
+
+```powershell
+usbipd list
+usbipd bind --busid <BUSID>
+usbipd attach --wsl --busid <BUSID>
+```
+
+**esptool 4 versus 5.** Version 5 renamed the subcommands to hyphens, so
+`write-flash` where 4 had `write_flash`, and the ESP-IDF build still prints the
+old spelling in its closing instructions. `tools/flash.sh` checks which one is
+installed and uses the right spelling, so either works.
 
 ### Which USB socket
 
@@ -146,14 +217,23 @@ The ESP32-S3 has no UF2 bootloader drive. It enumerates as a serial port and
 esptool writes over it:
 
 ```bash
-idf.py -p COM3 flash monitor             # Windows, CH343 bridge
-idf.py -p /dev/ttyUSB0 flash monitor     # Linux
-./tools/flash.sh /dev/ttyUSB0            # same thing with the toolchain sourced
+./tools/flash.sh COM3            # Windows, CH343 bridge
+./tools/flash.sh /dev/ttyACM0    # Linux
+./tools/flash.sh                 # lists the ports it can see, then stops
 ```
 
 esptool drives the auto-reset lines, so the board does not need to be put into
 download mode by hand. If it does not answer, hold **BOOT**, tap **RESET**,
 release **BOOT**, then flash again.
+
+With a native ESP-IDF, `idf.py -p COM3 flash monitor` does the same and adds the
+monitor. It is not the documented route only because it needs the toolchain on
+the host, which the container path deliberately avoids.
+
+**Opening the serial port resets the board.** Both the auto-reset lines are
+driven when a host opens the port, so anything watching the console sees a boot
+every time it connects. Wait a few seconds before sending keys to the demo menu
+or they arrive during startup and are discarded.
 
 Leave the monitor with `Ctrl-]`.
 
@@ -230,14 +310,21 @@ esp32-s3-touch-lcd-2.1/
 ├── sdkconfig.defaults          PSRAM, flash, console and FreeRTOS settings
 ├── partitions.csv
 ├── components/
-│   ├── board/                  pin map, I2C, IO expander, backlight, battery
+│   ├── board/                  pin map, I2C, IO expander, backlight, battery, RTC
 │   ├── display/                ST7701S + RGB panel, drawing helpers, 5x7 font
 │   └── sensors/                QMI8658 IMU, CST820 touch
 ├── main/
-│   ├── main.c                  launcher, menu, demo registry
+│   ├── main.c                  launcher, menu, demo registry, clock
 │   ├── demo_common.[ch]        shared geometry, filters and launcher services
+│   ├── net_time.[ch]           WiFi time fetch, then the radio goes back down
+│   ├── wifi_secrets.h.example  copy to wifi_secrets.h, which is gitignored
 │   └── demos/                  one file per demo
-└── tools/                      build, flash, ESP-IDF install, serial bridge
+└── tools/
+    ├── doctor.sh               check a host has what it needs
+    ├── build.sh                native ESP-IDF if present, container otherwise
+    ├── flash.sh                esptool, always on the host
+    ├── install_esp_idf.sh      native toolchain, Ubuntu and WSL2
+    └── serial_bridge.py        console helper
 ```
 
 ## Technical details
