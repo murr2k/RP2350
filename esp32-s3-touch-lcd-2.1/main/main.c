@@ -63,11 +63,24 @@ static const demo_t *const s_demos[] = {
  * whole scales, so "shrink" is three tiers rather than a smooth curve, and they
  * are also pushed outward along the bezel arc, which is what Wear OS's curving
  * layout does. */
-#define CAROUSEL_PITCH      64      /* pixels between detents */
-#define CAROUSEL_FRICTION   6.0f    /* per second, momentum decay */
+#define CAROUSEL_PITCH      84      /* pixels between detents */
+#define CAROUSEL_FRICTION   7.0f    /* per second, momentum decay */
 #define CAROUSEL_SNAP       14.0f   /* per second, pull toward the nearest item */
 #define CAROUSEL_TAP_SLOP   12      /* pixels of movement still counted as a tap */
-#define CAROUSEL_MAX_FLING  14.0f   /* items per second */
+#define CAROUSEL_MAX_FLING  7.0f    /* items per second */
+
+/* How far a fling carries past the finger, in items, is MAX_FLING / FRICTION,
+ * because the speed decays by a constant fraction per second and the distance
+ * is its integral. One item, here: enough to feel like it was thrown, not
+ * enough to lose your place.
+ *
+ * Being sensitive to a flick is a separate matter from carrying far, and was
+ * the bigger half of the problem. Speed used to come from a single pair of
+ * touch samples, so one jittery reading a few pixels wide became a fling of
+ * several items. It is smoothed now, and a finger that comes to rest before
+ * lifting parks the list instead of throwing it. */
+#define CAROUSEL_VEL_TAU    0.05f   /* seconds, smoothing on the drag speed */
+#define CAROUSEL_STILL_US   120000  /* still for this long: a park, not a flick */
 
 /* Keys 1..9 then a, b, c for the rest. */
 static char menu_key(int index)
@@ -149,6 +162,25 @@ static float clampf(float v, float lo, float hi)
     return (v < lo) ? lo : ((v > hi) ? hi : v);
 }
 
+/* The picker reads as a list of things rather than a list of symbols, so the
+ * underscores come out and the letters go up. Only for display: the name itself
+ * stays as it is, because it is the RP2350 target name and the console menu,
+ * the key lookup and the log lines all still use it. */
+static const char *menu_label(int index, char *buf, size_t len)
+{
+    const char *name = s_demos[index]->name;
+    size_t i = 0;
+
+    for (; name[i] != '\0' && i + 1 < len; i++) {
+        const char c = name[i];
+        buf[i] = (c == '_')                 ? ' '
+               : (c >= 'a' && c <= 'z')     ? (char)(c - 'a' + 'A')
+                                            : c;
+    }
+    buf[i] = '\0';
+    return buf;
+}
+
 static void draw_carousel(float scroll)
 {
     demo_frame_begin(GFX_BLACK);
@@ -192,12 +224,16 @@ static void draw_carousel(float scroll)
 
         const uint16_t color = gfx_dim((distance < CAROUSEL_PITCH / 2) ? GFX_CYAN : GFX_WHITE,
                                        level, 16);
+        char label[40];
         gfx_text_centered(DISP_CX, DISP_CY + dy - gfx_text_height(scale) / 2,
-                          s_demos[i]->name, color, scale);
+                          menu_label(i, label, sizeof(label)), color, scale);
     }
 
+    /* Just below the lower detent line, which keeps it clear of the next item
+     * down however far apart the rows are set. */
     const int centred = (int)clampf(scroll + 0.5f, 0.0f, (float)(DEMO_COUNT - 1));
-    gfx_text_centered(DISP_CX, DISP_CY + 74, s_demos[centred]->summary, GFX_DGREY, 1);
+    gfx_text_centered(DISP_CX, DISP_CY + CAROUSEL_PITCH / 2 + 12,
+                      s_demos[centred]->summary, GFX_DGREY, 1);
 
     char status[64];
     snprintf(status, sizeof(status), "IMU %s   TOUCH %s   BAT %.2fV",
@@ -224,6 +260,7 @@ static int menu_select(void)
     float drag_start_scroll = 0.0f;
     int drag_travel = 0;
     int last_y = 0;
+    uint64_t last_move_us = 0;
     int press_y = DISP_CY;      /* last position while actually touched: the
                                  * release event carries no coordinates */
 
@@ -307,6 +344,7 @@ static int menu_select(void)
             drag_travel = 0;
             last_y = touch.y;
             last_sample_us = now;
+            last_move_us = now;
             velocity = 0.0f;
             seek_target = -1.0f;
         } else if (pressed) {
@@ -322,9 +360,14 @@ static int menu_select(void)
             }
             const float sample_dt = (float)(now - last_sample_us) / 1000000.0f;
             if (moved != 0 && sample_dt > 0.0005f) {
-                velocity = -(float)moved / CAROUSEL_PITCH / sample_dt;
+                /* Eased towards, not taken outright, so a single stray sample
+                 * cannot become a fling on its own. */
+                const float instant = -(float)moved / CAROUSEL_PITCH / sample_dt;
+                velocity += (instant - velocity) *
+                            (sample_dt / (CAROUSEL_VEL_TAU + sample_dt));
                 last_y = touch.y;
                 last_sample_us = now;
+                last_move_us = now;
             }
         } else if (dragging) {
             dragging = false;
@@ -347,6 +390,10 @@ static int menu_select(void)
                     return centred;
                 }
                 seek_target = (float)tapped;
+            } else if (now - last_move_us > CAROUSEL_STILL_US) {
+                /* Held still and then lifted. That is putting the list down,
+                 * not throwing it, whatever it was doing on the way here. */
+                velocity = 0.0f;
             } else {
                 velocity = clampf(velocity, -CAROUSEL_MAX_FLING, CAROUSEL_MAX_FLING);
             }
