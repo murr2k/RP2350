@@ -39,9 +39,35 @@
 /** Printable character that renders as a degree sign. */
 #define GFX_DEG "\x7f"
 
+/* Drawing is recorded, not painted.
+ *
+ * Every call below appends to a display list. gfx_flush() then composes the
+ * frame one row at a time: each row is built in internal SRAM, starting from
+ * the background and with each primitive that crosses it painted in order, and
+ * the finished row is written to PSRAM once. So every pixel is written exactly
+ * once with its final value, instead of being cleared and then drawn over, and
+ * the scattered per-pixel work happens in fast memory rather than across the
+ * bus the display is reading from.
+ *
+ * The API is unchanged from immediate mode, so callers need not care. */
+
 /** Point every following call at this frame buffer. */
 void gfx_bind(uint16_t *fb);
 uint16_t *gfx_buffer(void);
+
+/** Compose the recorded frame into the bound buffer. demo_frame_end() does
+ *  this; call it directly only if you need the pixels before presenting.
+ *  Doing it twice without an intervening gfx_clear() is a no-op. */
+void gfx_flush(void);
+
+/** True if the display list overflowed and primitives were dropped. */
+bool gfx_overflowed(void);
+
+/** Paint a row yourself, for content no primitive describes, such as a per
+ *  pixel gradient. Called once per visible row while flushing, in list order
+ *  like any other primitive. */
+typedef void (*gfx_row_fn)(int y, uint16_t *row, void *ctx);
+void gfx_row_painter(gfx_row_fn fn, void *ctx);
 
 /** Half width of the visible circle on row y. The panel is round, so anything
  *  drawn further than this from the centre column is invisible. */

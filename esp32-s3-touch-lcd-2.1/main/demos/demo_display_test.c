@@ -19,19 +19,23 @@ static void solid(uint16_t color, const char *label, uint16_t text_color)
     demo_delay_ms(700);
 }
 
+/* Nothing describes a per pixel gradient as a primitive, so it paints its own
+ * rows. Recorded like anything else, so the label below still lands on top. */
+static void gradient_row(int y, uint16_t *row, void *ctx)
+{
+    (void)ctx;
+    for (int x = 0; x < DISP_W; x++) {
+        const uint8_t r = (uint8_t)(x * 255 / DISP_W);
+        const uint8_t g = (uint8_t)(y * 255 / DISP_H);
+        const uint8_t b = (uint8_t)(255 - (x + y) * 255 / (DISP_W + DISP_H));
+        row[x] = GFX_RGB(r, g, b);
+    }
+}
+
 static void gradient(void)
 {
     demo_frame_begin(GFX_BLACK);
-    uint16_t *fb = gfx_buffer();
-
-    for (int y = 0; y < DISP_H; y++) {
-        for (int x = 0; x < DISP_W; x++) {
-            const uint8_t r = (uint8_t)(x * 255 / DISP_W);
-            const uint8_t g = (uint8_t)(y * 255 / DISP_H);
-            const uint8_t b = (uint8_t)(255 - (x + y) * 255 / (DISP_W + DISP_H));
-            fb[y * DISP_W + x] = GFX_RGB(r, g, b);
-        }
-    }
+    gfx_row_painter(gradient_row, NULL);
     gfx_text_centered(DISP_CX, 40, "RGB565 GRADIENT", GFX_WHITE, 2);
     demo_frame_end();
     demo_delay_ms(1500);

@@ -18,7 +18,9 @@ static const uint16_t s_palette[SWATCH_COUNT] = {
     GFX_WHITE, GFX_RED, GFX_GREEN, GFX_CYAN, GFX_YELLOW, GFX_MAGENTA,
 };
 
-#define TRAIL_MAX 512
+/* Each trail point becomes a primitive in the display list, so this is also the
+ * demo that decides how long that list has to be. */
+#define TRAIL_MAX 256
 
 typedef struct {
     int16_t x, y;

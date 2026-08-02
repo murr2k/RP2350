@@ -205,6 +205,42 @@ cores:
   `main.c` creates it from a task pinned here, and the bounce buffer copy stays
   off the drawing core.
 
+### Drawing is recorded, then composed a row at a time
+
+`gfx_*` calls do not paint. They append to a display list, and `gfx_flush()`
+composes the frame one row at a time: build the row in internal SRAM from the
+background up, painting each primitive that crosses it in order, then write the
+finished row to PSRAM once. Every pixel is written exactly once with its final
+value, and the same path draws everything, whatever the demo.
+
+The API is unchanged, so no demo needed touching. Content that no primitive
+describes, such as the gradient in `display_test`, registers a row painter with
+`gfx_row_painter()` and is composed in list order like anything else.
+
+Measured, per frame:
+
+| | clear plus draw | record plus compose |
+|---|---|---|
+| `buffered_cube` | 10.9 + 3.7 = 14.6 ms | 0.1 + 13.8 = 13.9 ms |
+| `madgwick_cube` | 10.9 + 2.8 = 13.7 ms | 0.3 + 13.8 = 14.1 ms |
+| `axis_test` | 11.0 + 3.7 = 14.7 ms | 0.6 + 12.5 = 13.1 ms |
+
+So it is close to a wash, between half a millisecond saved and a couple of
+tenths lost. The reason is that the PSRAM write was never the part being
+avoided: composing still writes every visible pixel, which is the same ~11 ms,
+and what changed is that the scattered per-pixel drawing moved from PSRAM into
+SRAM, roughly trading three milliseconds of one for two of the other.
+
+What did change by an order of magnitude is the recording cost, now 0.05 to
+0.6 ms. Putting more on screen is nearly free until it is composed.
+
+The reason to have done it is what it unlocks. With drawing already row based,
+the frame buffer can be dropped entirely: `no_fb` mode calls `on_bounce_empty`
+to fill each bounce buffer, and composing straight into it would remove both the
+11 ms of PSRAM writes and the bounce copy that reads them back. That is
+rendering in interrupt context against a hard deadline, so it is a real step,
+but the renderer it needs now exists.
+
 ### What the frame budget is actually limited by
 
 Worth knowing before optimising anything else here. Per frame, measured:
