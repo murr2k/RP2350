@@ -39,35 +39,49 @@
 /** Printable character that renders as a degree sign. */
 #define GFX_DEG "\x7f"
 
-/* Drawing is recorded, not painted.
+/* Drawing is recorded, not painted, and there is no frame buffer.
  *
- * Every call below appends to a display list. gfx_flush() then composes the
- * frame one row at a time: each row is built in internal SRAM, starting from
- * the background and with each primitive that crosses it painted in order, and
- * the finished row is written to PSRAM once. So every pixel is written exactly
- * once with its final value, instead of being cleared and then drawn over, and
- * the scattered per-pixel work happens in fast memory rather than across the
- * bus the display is reading from.
+ * Every call below appends to a display list. The panel's interrupt then asks
+ * for a handful of rows at a time, as its DMA needs them, and those rows are
+ * composed straight into the bounce buffer in internal SRAM: background first,
+ * then each primitive that crosses the row, in order.
  *
- * The API is unchanged from immediate mode, so callers need not care. */
+ * Nothing is ever stored at frame size. The 450 KB frame buffers are gone, and
+ * with them the writes that filled them and the copy that read them back, which
+ * is the traffic the whole frame budget used to be spent on.
+ *
+ * The drawing API is unchanged, so demos need not care about any of this. */
 
-/** Point every following call at this frame buffer. */
+/** Retained for source compatibility. There is no frame buffer to bind. */
 void gfx_bind(uint16_t *fb);
+
+/** Always NULL now: nothing holds a whole frame. */
 uint16_t *gfx_buffer(void);
 
-/** Compose the recorded frame into the bound buffer. demo_frame_end() does
- *  this; call it directly only if you need the pixels before presenting.
- *  Doing it twice without an intervening gfx_clear() is a no-op. */
-void gfx_flush(void);
-
-/** True if the display list overflowed and primitives were dropped. */
+/** True if the list being recorded overflowed and primitives were dropped. */
 bool gfx_overflowed(void);
 
 /** Paint a row yourself, for content no primitive describes, such as a per
- *  pixel gradient. Called once per visible row while flushing, in list order
- *  like any other primitive. */
+ *  pixel gradient. Called while composing, in list order like any other
+ *  primitive, from interrupt context. Keep it short and self contained. */
 typedef void (*gfx_row_fn)(int y, uint16_t *row, void *ctx);
 void gfx_row_painter(gfx_row_fn fn, void *ctx);
+
+/* --- frame lifecycle, driven by the display component --------------------- */
+
+/** Point recording at whichever list the panel is not reading. */
+void gfx_begin_frame(void);
+
+/** Offer the recorded list to the panel; it is adopted at the next frame. */
+void gfx_commit(void);
+
+/** Adopt a committed list. Called from the panel's frame boundary. */
+void gfx_swap_lists(void);
+
+/** Compose rows [first_row, first_row + row_count) of the active list into
+ *  dest, which holds row_count consecutive rows of full width pixels. Called
+ *  from the panel's interrupt. */
+void gfx_compose_rows(uint16_t *dest, int first_row, int row_count);
 
 /** Half width of the visible circle on row y. The panel is round, so anything
  *  drawn further than this from the centre column is invisible. */

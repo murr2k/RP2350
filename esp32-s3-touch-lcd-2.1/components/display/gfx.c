@@ -38,17 +38,28 @@ typedef struct {
     void *row_ctx;
 } prim_t;
 
-static uint16_t *s_fb;
-static uint16_t s_bg = GFX_BLACK;
-static prim_t s_prims[MAX_PRIMS];
-static int s_prim_count;
-static char s_text_pool[TEXT_POOL];
-static int s_text_used;
-static bool s_overflow;
-static bool s_flushed;
-static uint16_t s_row[W];
+typedef struct {
+    prim_t prims[MAX_PRIMS];
+    int count;
+    char text[TEXT_POOL];
+    int text_used;
+    uint16_t bg;
+    bool overflow;
+} display_list_t;
 
-/* Half width of the visible circle on each row. */
+/* Two lists. The render task fills one while the panel's interrupt composes the
+ * other, and they change places at a frame boundary. This is the double
+ * buffering that used to cost two 450 KB frames in PSRAM, for 15 KB of SRAM. */
+static display_list_t s_lists[2];
+static display_list_t *s_record = &s_lists[0];
+static display_list_t *volatile s_active = &s_lists[1];
+static display_list_t *volatile s_pending;
+
+/* Row being composed. Composition is single threaded inside the ISR, so a
+ * single target pointer is enough and keeps the rasterisers simple. */
+static uint16_t *s_target;
+
+/* Half width of the visible circle on each row, for callers placing content. */
 static int16_t s_span[H];
 static bool s_span_ready;
 
@@ -80,32 +91,34 @@ int gfx_visible_half_width(int y)
 
 void gfx_bind(uint16_t *fb)
 {
-    s_fb = fb;
+    (void)fb;   /* there is no frame buffer any more */
 }
 
 uint16_t *gfx_buffer(void)
 {
-    return s_fb;
+    return NULL;
 }
 
 bool gfx_overflowed(void)
 {
-    return s_overflow;
+    return s_record->overflow;
 }
 
 /* --- recording ------------------------------------------------------------ */
 
 static prim_t *add_prim(prim_kind_t kind, int y0, int y1, uint16_t color)
 {
+    display_list_t *list = s_record;
+
     if (y1 < 0 || y0 >= H) {
         return NULL;            /* entirely off screen */
     }
-    if (s_prim_count >= MAX_PRIMS) {
-        s_overflow = true;
+    if (list->count >= MAX_PRIMS) {
+        list->overflow = true;
         return NULL;
     }
 
-    prim_t *p = &s_prims[s_prim_count++];
+    prim_t *p = &list->prims[list->count++];
     memset(p, 0, sizeof(*p));
     p->kind = (uint8_t)kind;
     p->color = color;
@@ -120,11 +133,30 @@ void gfx_clear(uint16_t color)
     if (!s_span_ready) {
         build_span_table();
     }
-    s_bg = color;
-    s_prim_count = 0;
-    s_text_used = 0;
-    s_overflow = false;
-    s_flushed = false;
+    s_record->bg = color;
+    s_record->count = 0;
+    s_record->text_used = 0;
+    s_record->overflow = false;
+}
+
+void gfx_commit(void)
+{
+    s_pending = s_record;
+}
+
+void gfx_swap_lists(void)
+{
+    display_list_t *pending = s_pending;
+    if (pending != NULL) {
+        s_active = pending;
+        s_pending = NULL;
+    }
+}
+
+void gfx_begin_frame(void)
+{
+    /* Record into whichever list the panel is not reading. */
+    s_record = (s_active == &s_lists[0]) ? &s_lists[1] : &s_lists[0];
 }
 
 void gfx_fill_rect(int x, int y, int w, int h, uint16_t color)
@@ -247,11 +279,13 @@ void gfx_row_painter(gfx_row_fn fn, void *ctx)
 static void add_text_run(int x, int y, const char *s, int len, uint16_t color,
                          uint16_t bg, int scale)
 {
+    display_list_t *list = s_record;
+
     if (len <= 0) {
         return;
     }
-    if (s_text_used + len > TEXT_POOL) {
-        s_overflow = true;
+    if (list->text_used + len > TEXT_POOL) {
+        list->overflow = true;
         return;
     }
 
@@ -263,11 +297,11 @@ static void add_text_run(int x, int y, const char *s, int len, uint16_t color,
     p->bg = bg;
     p->a = (int16_t)x;
     p->b = (int16_t)y;
-    p->text_off = (uint16_t)s_text_used;
+    p->text_off = (uint16_t)list->text_used;
     p->text_len = (uint16_t)len;
 
-    memcpy(&s_text_pool[s_text_used], s, (size_t)len);
-    s_text_used += len;
+    memcpy(&list->text[list->text_used], s, (size_t)len);
+    list->text_used += len;
 }
 
 void gfx_text_bg(int x, int y, const char *s, uint16_t color, uint16_t bg, int scale)
@@ -346,6 +380,40 @@ int gfx_text_height(int scale)
 
 /* --- rasterising ---------------------------------------------------------- */
 
+/* Everything below runs in the panel's interrupt, and Xtensa forbids the
+ * floating point unit there: touching a float in an ISR raises a coprocessor
+ * exception and panics the core. (CONFIG_FREERTOS_FPU_IN_ISR exists but is
+ * ESP32 only, not S3.) So the rasterisers are integer throughout. Recording,
+ * which runs in a task, is free to use floats and does. */
+
+/** Integer square root, rounded down. */
+static inline uint32_t isqrt32(uint32_t v)
+{
+    uint32_t rem = 0;
+    uint32_t root = 0;
+
+    for (int i = 0; i < 16; i++) {
+        root <<= 1;
+        rem = (rem << 2) | (v >> 30);
+        v <<= 2;
+        if (root < rem) {
+            rem -= root | 1u;
+            root += 2;
+        }
+    }
+    return root >> 1;
+}
+
+/** Division rounded to nearest, correct for negative numerators. */
+static inline int div_round(int num, int den)
+{
+    if (den < 0) {
+        num = -num;
+        den = -den;
+    }
+    return (num >= 0) ? (num + den / 2) / den : -(((-num) + den / 2) / den);
+}
+
 static inline void span(int x0, int x1, uint16_t color)
 {
     if (x0 < 0) {
@@ -355,7 +423,7 @@ static inline void span(int x0, int x1, uint16_t color)
         x1 = W - 1;
     }
     for (int x = x0; x <= x1; x++) {
-        s_row[x] = color;
+        s_target[x] = color;
     }
 }
 
@@ -377,21 +445,22 @@ static void raster_segment(int x0, int y0, int x1, int y1, int y, uint16_t color
         return;
     }
 
-    const float slope = (float)(x1 - x0) / (float)(y1 - y0);
-    float ya = (float)y - 0.5f;
-    float yb = (float)y + 0.5f;
-    if (ya < (float)lo) {
-        ya = (float)lo;
+    /* Half rows, so the row's top and bottom edges land exactly on integers
+     * and no floating point is needed. */
+    const int dx = x1 - x0;
+    const int dy = y1 - y0;
+    int ya2 = 2 * y - 1;
+    int yb2 = 2 * y + 1;
+    if (ya2 < 2 * lo) {
+        ya2 = 2 * lo;
     }
-    if (yb > (float)hi) {
-        yb = (float)hi;
+    if (yb2 > 2 * hi) {
+        yb2 = 2 * hi;
     }
 
-    const float xa = (float)x0 + (ya - (float)y0) * slope;
-    const float xb = (float)x0 + (yb - (float)y0) * slope;
-    const int ia = (int)lroundf((xa < xb) ? xa : xb);
-    const int ib = (int)lroundf((xa < xb) ? xb : xa);
-    span(ia, ib, color);
+    const int xa = x0 + div_round((ya2 - 2 * y0) * dx, 2 * dy);
+    const int xb = x0 + div_round((yb2 - 2 * y0) * dx, 2 * dy);
+    span((xa < xb) ? xa : xb, (xa < xb) ? xb : xa, color);
 }
 
 static void raster_line(const prim_t *p, int y)
@@ -411,21 +480,24 @@ static void raster_line(const prim_t *p, int y)
 
 static void raster_circle(const prim_t *p, int y)
 {
-    const float dy = (float)(y - p->b);
-    const float outer = (float)p->c + 0.5f;
-    const float inner = (float)p->c - 0.5f;
+    /* Doubled units, so the half pixel band either side of the radius is exact
+     * in integers: outer is 2r+1, inner 2r-1, and the square root comes back
+     * doubled too. */
+    const int dy2 = 2 * (y - p->b);
+    const int outer = 2 * p->c + 1;
+    const int inner = 2 * p->c - 1;
 
-    const float o2 = outer * outer - dy * dy;
-    if (o2 < 0.0f) {
+    const int o2 = outer * outer - dy2 * dy2;
+    if (o2 < 0) {
         return;
     }
-    const int xo = (int)sqrtf(o2);
-    const float i2 = inner * inner - dy * dy;
+    const int xo = (int)isqrt32((uint32_t)o2) / 2;
+    const int i2 = (inner > 0) ? (inner * inner - dy2 * dy2) : -1;
 
-    if (i2 <= 0.0f) {
+    if (i2 <= 0) {
         span(p->a - xo, p->a + xo, p->color);    /* the caps */
     } else {
-        const int xi = (int)sqrtf(i2);
+        const int xi = (int)isqrt32((uint32_t)i2) / 2;
         span(p->a - xo, p->a - xi, p->color);
         span(p->a + xi, p->a + xo, p->color);
     }
@@ -433,16 +505,16 @@ static void raster_circle(const prim_t *p, int y)
 
 static void raster_disc(const prim_t *p, int y)
 {
-    const float dy = (float)(y - p->b);
-    const float d2 = (float)p->c * (float)p->c - dy * dy;
-    if (d2 < 0.0f) {
+    const int dy = y - p->b;
+    const int d2 = p->c * p->c - dy * dy;
+    if (d2 < 0) {
         return;
     }
-    const int dx = (int)sqrtf(d2);
+    const int dx = (int)isqrt32((uint32_t)d2);
     span(p->a - dx, p->a + dx, p->color);
 }
 
-static void raster_text(const prim_t *p, int y)
+static void raster_text(const display_list_t *list, const prim_t *p, int y)
 {
     const int scale = (p->scale < 1) ? 1 : p->scale;
     const int glyph_row = (y - p->b) / scale;
@@ -451,7 +523,7 @@ static void raster_text(const prim_t *p, int y)
     }
 
     for (int i = 0; i < p->text_len; i++) {
-        unsigned char ch = (unsigned char)s_text_pool[p->text_off + i];
+        unsigned char ch = (unsigned char)list->text[p->text_off + i];
         if (ch < 0x20 || ch > 0x7F) {
             ch = '?';
         }
@@ -472,38 +544,31 @@ static void raster_text(const prim_t *p, int y)
     }
 }
 
-static void fill_background(int x_lo, int count)
+void gfx_compose_rows(uint16_t *dest, int first_row, int row_count)
 {
-    if ((s_bg >> 8) == (s_bg & 0xFF)) {
-        memset(&s_row[x_lo], s_bg & 0xFF, (size_t)count * sizeof(uint16_t));
-        return;
-    }
-    for (int i = 0; i < count; i++) {
-        s_row[x_lo + i] = s_bg;
-    }
-}
+    const display_list_t *list = s_active;
+    const uint16_t bg = list->bg;
+    const bool bytewise = ((bg >> 8) == (bg & 0xFF));
 
-void gfx_flush(void)
-{
-    if (s_fb == NULL || s_flushed) {
-        return;
-    }
-    if (!s_span_ready) {
-        build_span_table();
-    }
+    for (int r = 0; r < row_count; r++) {
+        const int y = first_row + r;
+        s_target = dest + (size_t)r * W;
 
-    for (int y = 0; y < H; y++) {
-        const int half = s_span[y];
-        if (half == 0) {
-            continue;           /* no pixels behind this row of the glass */
+        if (y < 0 || y >= H) {
+            memset(s_target, 0, (size_t)W * sizeof(uint16_t));
+            continue;
         }
-        const int x_lo = W / 2 - half;
-        const int count = half * 2;
 
-        fill_background(x_lo, count);
+        if (bytewise) {
+            memset(s_target, bg & 0xFF, (size_t)W * sizeof(uint16_t));
+        } else {
+            for (int x = 0; x < W; x++) {
+                s_target[x] = bg;
+            }
+        }
 
-        for (int i = 0; i < s_prim_count; i++) {
-            const prim_t *p = &s_prims[i];
+        for (int i = 0; i < list->count; i++) {
+            const prim_t *p = &list->prims[i];
             if (y < p->y0 || y > p->y1) {
                 continue;
             }
@@ -521,16 +586,12 @@ void gfx_flush(void)
                 raster_disc(p, y);
                 break;
             case P_TEXT:
-                raster_text(p, y);
+                raster_text(list, p, y);
                 break;
             case P_ROW_FN:
-                p->row_fn(y, s_row, p->row_ctx);
+                p->row_fn(y, s_target, p->row_ctx);
                 break;
             }
         }
-
-        memcpy(&s_fb[y * W + x_lo], &s_row[x_lo], (size_t)count * sizeof(uint16_t));
     }
-
-    s_flushed = true;
 }

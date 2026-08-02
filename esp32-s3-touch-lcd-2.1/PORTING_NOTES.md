@@ -234,12 +234,45 @@ SRAM, roughly trading three milliseconds of one for two of the other.
 What did change by an order of magnitude is the recording cost, now 0.05 to
 0.6 ms. Putting more on screen is nearly free until it is composed.
 
-The reason to have done it is what it unlocks. With drawing already row based,
-the frame buffer can be dropped entirely: `no_fb` mode calls `on_bounce_empty`
-to fill each bounce buffer, and composing straight into it would remove both the
-11 ms of PSRAM writes and the bounce copy that reads them back. That is
-rendering in interrupt context against a hard deadline, so it is a real step,
-but the renderer it needs now exists.
+### There is no frame buffer
+
+The step that made the row based renderer worth having. The panel runs in
+`no_fb` mode: nothing is stored at frame size at all. Its interrupt calls
+`on_bounce_empty` whenever the DMA has drained a bounce buffer, and those ten
+rows are composed straight into it from the display list.
+
+The display lists are double buffered instead of the frames: two lists of about
+15 KB in SRAM, swapped at a frame boundary, in place of two 450 KB frames in
+PSRAM.
+
+| | with frame buffers | composed on demand |
+|---|---|---|
+| render core, per frame | 13.9 ms | 0.03 to 0.5 ms |
+| compose, per bounce buffer | n/a | 161 to 225 us of a 680 us budget |
+| frame rate | 58.5 fps | 58.5 fps, panel limited |
+| PSRAM free | 6903 KB | 7803 KB |
+| PSRAM bandwidth left for the app | 30.5 MB/s | 48.6 MB/s |
+
+The frame rate cannot improve, the panel sets it. What changed is that the
+drawing core is now idle 97% of the time, and the display has stopped competing
+for memory: the same benchmark that measured 30.5 MB/s while two frame buffers
+were being streamed measures 48.6 MB/s now.
+
+**No floating point in the rasterisers.** Xtensa forbids the FPU in an interrupt
+handler: touching a float there raises a coprocessor exception and panics the
+core. `CONFIG_FREERTOS_FPU_IN_ISR` exists but is ESP32 only, not S3. So
+everything reachable from `gfx_compose_rows()` is integer, including an integer
+square root for the circles and half row arithmetic for line interpolation.
+Recording runs in a task and still uses floats freely, which is why `gfx_arrow()`
+can call `atan2f()`.
+
+Two consequences worth knowing. `LCD_2IN1_DisplayWindows()` and
+`LCD_2IN1_DisplayPoint()` are gone, because both push pixels into a stored frame
+and there is no longer one: this is the point where parity with the 1.28" driver
+had to break. And `CONFIG_LCD_RGB_ISR_IRAM_SAFE` is now off, because the
+rasteriser lives in PSRAM and calls into the standard library; nothing here
+writes flash at runtime, which is the only thing that would pull the cache out
+from under it.
 
 ### What the frame budget is actually limited by
 

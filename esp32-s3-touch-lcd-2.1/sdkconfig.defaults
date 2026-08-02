@@ -23,11 +23,12 @@ CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
 CONFIG_SPIRAM_RODATA=y
 
 # --- RGB panel ---------------------------------------------------------------
-# The panel runs in bounce buffer mode (see lcd_2in1.c). Keeping the LCD ISR in
-# IRAM stops a cache miss from stalling the refill, and restarting the transfer
-# on VSYNC makes any residual desync correct itself on the next frame instead of
-# leaving the picture walking sideways.
-CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
+# The panel has no frame buffer: its interrupt composes each bounce buffer from
+# the display list (see lcd_2in1.c and gfx.c). That rasteriser calls into libm
+# and lives in PSRAM, so the ISR cannot be marked IRAM safe. Nothing here writes
+# flash at runtime, which is the only thing that would disable the cache under
+# it. Restarting on VSYNC keeps any residual desync from accumulating.
+CONFIG_LCD_RGB_ISR_IRAM_SAFE=n
 CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
 
 # --- CPU / cache -------------------------------------------------------------

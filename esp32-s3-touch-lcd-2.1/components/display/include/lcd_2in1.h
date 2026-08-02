@@ -39,27 +39,29 @@ extern LCD_2IN1_ATTRIBUTES LCD_2IN1;
  *  square so both directions give the same 480x480 geometry. */
 esp_err_t LCD_2IN1_Init(uint8_t Scan_dir);
 
-/** The frame buffer that is safe to draw into right now. */
+/** Always NULL: there is no frame buffer. Kept for source compatibility. */
 uint16_t *LCD_2IN1_GetBuffer(void);
 
-/** Show a frame. Pass the pointer from LCD_2IN1_GetBuffer() to flip buffers;
- *  any other pointer is copied into the live frame instead.
- *
- *  Blocks until the panel has finished with the outgoing buffer, which is what
- *  makes the buffer returned by the next LCD_2IN1_GetBuffer() safe to draw
- *  into. Callers therefore need no delay of their own: the panel paces them. */
+/** Hand the recorded frame to the panel and wait for it to be adopted, which
+ *  is what makes the next frame safe to record. Callers need no delay of their
+ *  own: the panel paces them. */
+void LCD_2IN1_Present(void);
+
+/** Source compatible spelling of LCD_2IN1_Present(). The argument is ignored,
+ *  there being no frame buffer to hand over. */
 void LCD_2IN1_Display(uint16_t *Image);
+
+/** Longest and most recent time spent composing one bounce buffer, in
+ *  microseconds. Reading the maximum resets it. The budget is about 680 us. */
+uint32_t LCD_2IN1_ComposeMaxUs(void);
+uint32_t LCD_2IN1_ComposeLastUs(void);
 
 /** Fill every buffer with a colour and show it. */
 void LCD_2IN1_Clear(uint16_t Color);
 
-/** Push a sub-rectangle of a full-size image. Coordinates are inclusive, which
- *  matches the 1.28" driver. */
-void LCD_2IN1_DisplayWindows(uint16_t Xstart, uint16_t Ystart, uint16_t Xend, uint16_t Yend,
-                             uint16_t *Image);
-
-/** Set a single pixel straight on the panel. */
-void LCD_2IN1_DisplayPoint(uint16_t X, uint16_t Y, uint16_t Color);
+/* LCD_2IN1_DisplayWindows() and LCD_2IN1_DisplayPoint(), which the 1.28" driver
+ * provides, are gone: both push pixels into a stored frame, and there is no
+ * longer a frame to push them into. Draw with the gfx_* calls instead. */
 
 /** Backlight, 0..100 percent (thin wrapper over DEV_SET_PWM). */
 void LCD_2IN1_SetBacklight(uint8_t percent);

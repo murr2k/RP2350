@@ -83,8 +83,15 @@ static void scan_i2c(void)
  * of it is the cache fetching lines we are about to overwrite? */
 static void bench_psram(void)
 {
-    volatile uint32_t *p = (volatile uint32_t *)LCD_2IN1_GetBuffer();
+    /* There is no frame buffer to borrow any more, so the benchmark brings its
+     * own. A frame's worth, to keep the numbers comparable with the ones taken
+     * when the display still owned one. */
     const size_t bytes = (size_t)LCD_2IN1_WIDTH * LCD_2IN1_HEIGHT * sizeof(uint16_t);
+    volatile uint32_t *p = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+    if (p == NULL) {
+        report("psram bench: no memory");
+        return;
+    }
     const size_t words = bytes / 4;
     const double mb = (double)bytes / (1024.0 * 1024.0);
     uint64_t t;
@@ -124,7 +131,7 @@ static void bench_psram(void)
     printf("  1 store/line%6llu us  %5.1f MB/s of lines\n", (unsigned long long)t_sparse,
            mb / (t_sparse / 1000000.0));
 
-    memset((void *)p, 0, bytes);
+    heap_caps_free((void *)p);
 }
 
 static void run(void)

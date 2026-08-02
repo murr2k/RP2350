@@ -10,34 +10,77 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_rgb.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "gfx.h"
 #include "tca9554.h"
+
+/* Rows composed per bounce buffer. The panel drains one buffer every
+ * BOUNCE_LINES / 29192 lines per second, about 342 us, and there are two, so a
+ * refill has roughly twice that to complete. */
+#define BOUNCE_LINES 10
 
 static const char *TAG = "lcd";
 
 LCD_2IN1_ATTRIBUTES LCD_2IN1;
 
 static esp_lcd_panel_handle_t s_panel;
-static uint16_t *s_fb[2];
-static int s_back;              /* index of the buffer applications draw into */
 static SemaphoreHandle_t s_frame_done;
 
-/* Fires from the LCD ISR the moment the panel has finished reading a frame out
- * of the buffer it was given and has adopted whichever buffer was handed over
- * since. That instant is exactly when the other buffer becomes safe to draw
- * into, so it is the event the render loop paces itself against.
- *
- * IRAM_ATTR because CONFIG_LCD_RGB_ISR_IRAM_SAFE is on: this has to stay
- * callable with the flash cache disabled. Giving a semaphore is all it may do,
- * the drawing itself happens back in the task. */
-static IRAM_ATTR bool on_frame_finish(esp_lcd_panel_handle_t panel,
-                                      const esp_lcd_rgb_panel_event_data_t *edata,
-                                      void *user_ctx)
+/* Composition timing, so the deadline margin is measurable rather than assumed. */
+static volatile uint32_t s_compose_max_us;
+static volatile uint32_t s_compose_last_us;
+
+uint32_t LCD_2IN1_ComposeMaxUs(void)
+{
+    const uint32_t v = s_compose_max_us;
+    s_compose_max_us = 0;
+    return v;
+}
+
+uint32_t LCD_2IN1_ComposeLastUs(void)
+{
+    return s_compose_last_us;
+}
+
+/* The panel asks for the next few rows whenever its DMA has drained a bounce
+ * buffer. This is where the picture is actually produced: there is no frame
+ * buffer behind it, the rows are composed on demand straight into SRAM. */
+static bool on_bounce_empty(esp_lcd_panel_handle_t panel, void *bounce_buf,
+                            int pos_px, int len_bytes, void *user_ctx)
+{
+    (void)panel;
+    (void)user_ctx;
+
+    const int64_t started = esp_timer_get_time();
+
+    const int first_row = pos_px / LCD_2IN1_WIDTH;
+    const int rows = len_bytes / (LCD_2IN1_WIDTH * (int)sizeof(uint16_t));
+    gfx_compose_rows((uint16_t *)bounce_buf, first_row, rows);
+
+    const uint32_t elapsed = (uint32_t)(esp_timer_get_time() - started);
+    s_compose_last_us = elapsed;
+    if (elapsed > s_compose_max_us) {
+        s_compose_max_us = elapsed;
+    }
+    return false;
+}
+
+/* Fires from the LCD ISR once a whole frame has been composed. That is the
+ * moment a newly committed display list can take over, and the event the render
+ * loop paces itself against. */
+static bool on_frame_finish(esp_lcd_panel_handle_t panel,
+                            const esp_lcd_rgb_panel_event_data_t *edata,
+                            void *user_ctx)
 {
     (void)panel;
     (void)edata;
     (void)user_ctx;
+
+    /* A whole frame has been composed, so anything the render task committed
+     * meanwhile can take over from here. */
+    gfx_swap_lists();
 
     BaseType_t high_task_woken = pdFALSE;
     xSemaphoreGiveFromISR(s_frame_done, &high_task_woken);
@@ -225,15 +268,15 @@ static esp_err_t rgb_panel_start(void)
         },
         .data_width = 16,
         .bits_per_pixel = 16,
-        .num_fbs = 2,               /* double buffered, both in PSRAM */
-        .bounce_buffer_size_px = LCD_2IN1_WIDTH * 10,
+        .num_fbs = 0,                                       /* no frame buffer */
+        .bounce_buffer_size_px = LCD_2IN1_WIDTH * BOUNCE_LINES,
         .hsync_gpio_num = BOARD_LCD_RGB_HSYNC_GPIO,
         .vsync_gpio_num = BOARD_LCD_RGB_VSYNC_GPIO,
         .de_gpio_num = BOARD_LCD_RGB_DE_GPIO,
         .pclk_gpio_num = BOARD_LCD_RGB_PCLK_GPIO,
         .disp_gpio_num = BOARD_LCD_RGB_DISP_GPIO,
         .flags = {
-            .fb_in_psram = true,
+            .no_fb = true,
         },
     };
     for (int i = 0; i < 16; i++) {
@@ -270,17 +313,6 @@ static esp_err_t rgb_panel_start(void)
         return err;
     }
 
-    void *fb0 = NULL;
-    void *fb1 = NULL;
-    err = esp_lcd_rgb_panel_get_frame_buffer(s_panel, 2, &fb0, &fb1);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "no frame buffers: %s", esp_err_to_name(err));
-        return err;
-    }
-    s_fb[0] = (uint16_t *)fb0;
-    s_fb[1] = (uint16_t *)fb1;
-    s_back = 1;
-
     s_frame_done = xSemaphoreCreateBinary();
     if (s_frame_done == NULL) {
         ESP_LOGE(TAG, "cannot create the frame semaphore");
@@ -288,13 +320,16 @@ static esp_err_t rgb_panel_start(void)
     }
 
     const esp_lcd_rgb_panel_event_callbacks_t callbacks = {
+        .on_bounce_empty = on_bounce_empty,
         .on_bounce_frame_finish = on_frame_finish,
     };
     err = esp_lcd_rgb_panel_register_event_callbacks(s_panel, &callbacks, NULL);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "cannot hook the frame event: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "cannot hook the panel events: %s", esp_err_to_name(err));
         return err;
     }
+
+    gfx_begin_frame();
     return ESP_OK;
 }
 
@@ -324,47 +359,46 @@ esp_err_t LCD_2IN1_Init(uint8_t Scan_dir)
     LCD_2IN1_Clear(0x0000);
     DEV_SET_PWM(backlight);
 
-    ESP_LOGI(TAG, "ST7701S up: %dx%d, %d MHz pixel clock, 2 frame buffers in PSRAM",
+    ESP_LOGI(TAG, "ST7701S up: %dx%d, %d MHz pixel clock, composed on demand, no frame buffer",
              LCD_2IN1_WIDTH, LCD_2IN1_HEIGHT, BOARD_LCD_PCLK_HZ / 1000000);
     return ESP_OK;
 }
 
 uint16_t *LCD_2IN1_GetBuffer(void)
 {
-    return s_fb[s_back];
+    return NULL;        /* nothing holds a whole frame any more */
+}
+
+void LCD_2IN1_Present(void)
+{
+    if (s_panel == NULL) {
+        return;
+    }
+
+    /* Drop any event left over from an earlier frame, so the wait below is for
+     * this frame's handover and not one that already happened. */
+    if (s_frame_done != NULL) {
+        xSemaphoreTake(s_frame_done, 0);
+    }
+
+    /* Offer the recorded list. The panel adopts it at its next frame boundary,
+     * so wait for that before recording again: until then the interrupt is
+     * still composing from the list just handed over.
+     *
+     * The timeout is a backstop. A missed event costs a frame, it does not
+     * wedge a demo. */
+    gfx_commit();
+
+    if (s_frame_done != NULL) {
+        xSemaphoreTake(s_frame_done, pdMS_TO_TICKS(100));
+    }
+    gfx_begin_frame();
 }
 
 void LCD_2IN1_Display(uint16_t *Image)
 {
-    if (s_panel == NULL || Image == NULL) {
-        return;
-    }
-
-    const bool is_frame_buffer = (Image == s_fb[0] || Image == s_fb[1]);
-
-    /* Drop any event left over from an earlier frame, so the wait below is for
-     * the handover being requested now and not one that already happened. */
-    if (is_frame_buffer && s_frame_done != NULL) {
-        xSemaphoreTake(s_frame_done, 0);
-    }
-
-    esp_lcd_panel_draw_bitmap(s_panel, 0, 0, LCD_2IN1_WIDTH, LCD_2IN1_HEIGHT, Image);
-
-    /* draw_bitmap only records which buffer to use next, it does not wait: the
-     * panel keeps reading the old one until the current frame ends. Returning
-     * straight away would let the caller start clearing a buffer that is still
-     * on screen, so block until the ISR says the handover has happened. That
-     * turns the whole render loop into one paced by the panel, with no sleeps
-     * and nothing drawing into a live buffer.
-     *
-     * The timeout is a backstop: a missed event costs a frame, it does not wedge
-     * a demo. */
-    if (is_frame_buffer) {
-        if (s_frame_done != NULL) {
-            xSemaphoreTake(s_frame_done, pdMS_TO_TICKS(100));
-        }
-        s_back = (Image == s_fb[0]) ? 1 : 0;
-    }
+    (void)Image;        /* kept for source compatibility with the 1.28" driver */
+    LCD_2IN1_Present();
 }
 
 void LCD_2IN1_Clear(uint16_t Color)
@@ -372,51 +406,12 @@ void LCD_2IN1_Clear(uint16_t Color)
     if (s_panel == NULL) {
         return;
     }
+    /* An empty list on that background, held for two frames so both bounce
+     * buffers have been composed from it. */
     for (int i = 0; i < 2; i++) {
-        uint16_t *fb = s_fb[i];
-        if (fb == NULL) {
-            continue;
-        }
-        for (int p = 0; p < LCD_2IN1_WIDTH * LCD_2IN1_HEIGHT; p++) {
-            fb[p] = Color;
-        }
-        LCD_2IN1_Display(fb);
+        gfx_clear(Color);
+        LCD_2IN1_Present();
     }
-}
-
-void LCD_2IN1_DisplayWindows(uint16_t Xstart, uint16_t Ystart, uint16_t Xend, uint16_t Yend,
-                             uint16_t *Image)
-{
-    if (s_panel == NULL || Image == NULL) {
-        return;
-    }
-    if (Xend >= LCD_2IN1_WIDTH) {
-        Xend = LCD_2IN1_WIDTH - 1;
-    }
-    if (Yend >= LCD_2IN1_HEIGHT) {
-        Yend = LCD_2IN1_HEIGHT - 1;
-    }
-    if (Xstart > Xend || Ystart > Yend) {
-        return;
-    }
-
-    /* esp_lcd wants the source rows packed for the rectangle being drawn, while
-     * the caller hands us a full-size image, so feed it a row at a time. */
-    const int width = Xend - Xstart + 1;
-    uint16_t row[LCD_2IN1_WIDTH];
-
-    for (int y = Ystart; y <= Yend; y++) {
-        memcpy(row, &Image[y * LCD_2IN1_WIDTH + Xstart], (size_t)width * sizeof(uint16_t));
-        esp_lcd_panel_draw_bitmap(s_panel, Xstart, y, Xstart + width, y + 1, row);
-    }
-}
-
-void LCD_2IN1_DisplayPoint(uint16_t X, uint16_t Y, uint16_t Color)
-{
-    if (s_panel == NULL || X >= LCD_2IN1_WIDTH || Y >= LCD_2IN1_HEIGHT) {
-        return;
-    }
-    esp_lcd_panel_draw_bitmap(s_panel, X, Y, X + 1, Y + 1, &Color);
 }
 
 void LCD_2IN1_SetBacklight(uint8_t percent)

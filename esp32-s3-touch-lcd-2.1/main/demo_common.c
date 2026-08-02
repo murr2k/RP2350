@@ -544,40 +544,35 @@ float demo_delta_seconds(uint64_t *last_us)
 }
 
 /* Temporary instrumentation: where does a frame actually go? */
-static uint64_t s_t_record, s_t_compose, s_t_present;
+static uint64_t s_t_record, s_t_present;
 static uint64_t s_mark_begin;
 static uint32_t s_stat_frames;
 
 uint16_t *demo_frame_begin(uint16_t clear_color)
 {
-    uint16_t *fb = LCD_2IN1_GetBuffer();
-    gfx_bind(fb);
     gfx_clear(clear_color);
     s_mark_begin = demo_micros();
-    return fb;
+    return NULL;        /* nothing holds a whole frame */
 }
 
 void demo_frame_end(void)
 {
     const uint64_t t_recorded = demo_micros();
     s_t_record += t_recorded - s_mark_begin;
+    const bool overflowed = gfx_overflowed();
 
-    gfx_flush();
-    const uint64_t t_composed = demo_micros();
-    s_t_compose += t_composed - t_recorded;
-
-    LCD_2IN1_Display(gfx_buffer());
+    LCD_2IN1_Present();
     touch_poll();
-    s_t_present += demo_micros() - t_composed;
+    s_t_present += demo_micros() - t_recorded;
 
     if (++s_stat_frames >= 100) {
-        printf("\n[frame us] record %llu  compose %llu  present %llu  total %llu%s\n",
+        printf("\n[frame us] record %llu  wait %llu  total %llu  compose/bounce max %lu us%s\n",
                (unsigned long long)(s_t_record / s_stat_frames),
-               (unsigned long long)(s_t_compose / s_stat_frames),
                (unsigned long long)(s_t_present / s_stat_frames),
-               (unsigned long long)((s_t_record + s_t_compose + s_t_present) / s_stat_frames),
-               gfx_overflowed() ? "  DISPLAY LIST OVERFLOW" : "");
-        s_t_record = s_t_compose = s_t_present = 0;
+               (unsigned long long)((s_t_record + s_t_present) / s_stat_frames),
+               (unsigned long)LCD_2IN1_ComposeMaxUs(),
+               overflowed ? "  DISPLAY LIST OVERFLOW" : "");
+        s_t_record = s_t_present = 0;
         s_stat_frames = 0;
     }
 }
