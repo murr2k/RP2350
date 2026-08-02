@@ -12,9 +12,11 @@ See [ARCHITECTURE_LOG.md](ARCHITECTURE_LOG.md) for how it got here and
 | Aberrant pixels | Gone. Was a composition overrun at 58 fps |
 | Ball smearing | Gone. Animation is time based rather than per frame |
 | Panel | 11 MHz, 40 Hz refresh, 498 us per bounce buffer |
-| Worst demo | `display_test` at 387 us, 78% of budget |
+| Worst demo | `display_test` at 399 us, 89% of the trim threshold |
 | Rain | Sums in intensity so crossings flare, wake behind the front |
-| Everything else | 13 demos launch, no panics, filters at 250 Hz on core 1 |
+| IMU axes | Settled by tilting: the sensor is mounted a quarter turn round |
+| Overrun | A frame too expensive to draw trims itself instead of freezing the panel |
+| Everything else | 14 demos launch, no panics, filters at 250 Hz on core 1 |
 
 ## Open items
 
@@ -31,17 +33,13 @@ constants are at the top of `main/main.c`:
 | `CAROUSEL_TAP_SLOP` | 12 | pixels of movement still counted as a tap |
 | `CAROUSEL_MAX_FLING` | 14.0 | items per second |
 
-**2. The IMU axis spin, unresolved since bring-up.** The sensor frame was
-corrected by a 180 degree rotation about X, which leaves one ambiguity: a
-further 180 degrees about Z, deciding whether tilting the board right leans the
-cube right or left. Both are right handed, so the filters are correct either
-way and only the on screen direction differs.
-
-To settle it, hold the board with its **right hand edge raised** for a few
-seconds and read the accelerometer. The convention the demos document is "tilt
-right is +X", so a positive `ax` confirms the current mapping and a negative one
-means switching both `BOARD_IMU_*_SIGN` lines in
-`components/board/include/board_config.h` to `{ -1.0f, 1.0f, -1.0f }`.
+**2. `intuitive_cube` has a convention of its own.** Settling the board frame
+raised a separate question one level up: that demo feeds `acc.y` to the
+horizontal screen axis and `acc.x` to the vertical one, which is not the same
+convention `board_config.h` now documents. The board frame is right either way,
+so this is a demo level question about how a tilt should read on screen, not a
+sensor one. Worth a look at demo `4` to see whether the cube leans the way the
+board leans before changing anything.
 
 **3. The instrumentation is still in the build**, by request. It prints a frame
 breakdown every 100 frames from `demo_frame_end()` and runs a PSRAM benchmark in
@@ -57,6 +55,21 @@ the 129% `display_test` overrun behind the aberrant pixels. Costs a per frame
 | `RAIN_TRAIL` | 2.6 | wake length; 1.0 is the original's symmetric ring |
 | `RAIN_RING_SIGMA` | 26 | ring thickness |
 | `RAIN_AREA_BUDGET` | 240000 | blended pixels before it trims itself |
+
+## Settled, for the record
+
+The IMU frame is done. The sensor sits a **quarter turn** round from the screen,
+which no combination of signs can undo, so the map swaps its X and Y. Measured by
+holding the board at 45 degrees each way: before the fix a right hand edge tilt
+read `ay -0.75` and left `ax` alone, after it reads `ax +0.85` and leaves `ay`
+alone. Flat has always read `az +0.98`.
+
+The touch panel is **single contact** and cannot be made otherwise. The CST820
+senses rows and columns separately, so two fingers and their two mirror
+positions are indistinguishable; the register map has nowhere to put a second
+point and the count register never reports one. `touch_test` shows the live
+count. A one finger equivalent of a two finger twist would be an arcball, where
+dragging around the rim turns the model about the screen normal.
 
 ## Working notes
 

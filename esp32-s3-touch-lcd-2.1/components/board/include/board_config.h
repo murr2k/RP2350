@@ -153,18 +153,30 @@
  * sensor's +Z therefore points into the back of the board, so the frame needs
  * turning over. That is a 180 degree rotation, which flips two axes, not one:
  * negating Z alone would leave a mirrored left-handed frame and the fusion
- * filters would wind yaw the wrong way. The rotation below is 180 degrees about
- * X, so Y and Z both invert.
+ * filters would wind yaw the wrong way. Turning it over about X, so that Y and
+ * Z both invert, puts Z right and leaves the sensor's X and Y where they were.
  *
- * The remaining ambiguity is a 180 degree spin about Z, which decides whether
- * tilting the board right leans the cube right or left. If it comes out
- * mirrored, use { -1.0f, 1.0f, -1.0f } for both SIGN lines instead.
+ * That left the part no flat reading can settle, because every rotation about Z
+ * looks the same lying down. Tilting it answers that, and the answer was not the
+ * half turn this once assumed. Held at 45 degrees with the right hand edge
+ * raised it read (+0.05, -0.75); with the edge nearest the reader raised it read
+ * (-0.62, -0.13). Each tilt came out on the axis the other one should have used,
+ * so the sensor is mounted a quarter turn round, not half.
+ *
+ * Undoing that quarter turn is X = -Y and Y = +X applied on top of the flip
+ * above, which comes out as the sensor's own X and Y swapped and both positive.
+ * The determinant is still +1, so the frame stays right handed and the filters
+ * stay consistent.
+ *
+ * The result: flat reads +1 g on Z, raising the right hand edge reads +X, and Y
+ * completes the set, which puts it toward the top of the screen. So raising the
+ * edge nearest you reads -Y.
  *
  * The gyroscope has to get the same transformation as the accelerometer or the
  * filters see an inconsistent frame. */
-#define BOARD_IMU_ACCEL_MAP         { 0, 1, 2 }
-#define BOARD_IMU_ACCEL_SIGN        { 1.0f, -1.0f, -1.0f }
-#define BOARD_IMU_GYRO_MAP          { 0, 1, 2 }
-#define BOARD_IMU_GYRO_SIGN         { 1.0f, -1.0f, -1.0f }
+#define BOARD_IMU_ACCEL_MAP         { 1, 0, 2 }
+#define BOARD_IMU_ACCEL_SIGN        { 1.0f, 1.0f, -1.0f }
+#define BOARD_IMU_GYRO_MAP          { 1, 0, 2 }
+#define BOARD_IMU_GYRO_SIGN         { 1.0f, 1.0f, -1.0f }
 
 #endif /* BOARD_CONFIG_H */
